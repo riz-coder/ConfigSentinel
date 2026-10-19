@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Verify MFA · ConfigSentinel{% endblock %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:auto">
+  <h1>Authenticator verification</h1>
+  <p>Enter the current code from your authenticator app.</p>
+  {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+  <form method="post">{% csrf_token %}<label for="token">6-digit code</label><input id="token" name="token" inputmode="numeric" autocomplete="one-time-code" required maxlength="8"><button type="submit">Verify</button></form>
+</div>
+{% endblock %}

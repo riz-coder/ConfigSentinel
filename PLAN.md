@@ -2,23 +2,19 @@
 
 ## Current work package
 
-`WP-CORE-01` — production-shaped foundation for Windows development and later
-single-VPS deployment, with the minimum regulatory source workflow required to
-enforce honest legal states.
+`WP-CORE-02` — authentication hardening and PostgreSQL-enforced tenant/audit
+boundaries for Windows development and later single-VPS deployment.
 
 ## In scope
 
-- Initialize a Git-ready repository and documented Python development workflow.
-- Bootstrap Django/DRF with environment-based settings and PostgreSQL support.
-- Add tenant, membership, role, and tenant-bound access foundations.
-- Add append-only audit event foundations.
-- Add regulatory source/version/regulation models with legal source states.
-- Expose a small role-aware API and server-rendered dashboard.
-- Provide Docker Compose development and production-shaped deployment files.
-- Add automated tests for authentication, cross-tenant isolation, immutable
-  audit records, and regulatory state guards.
-- Document setup, deployment assumptions, security decisions, and acceptance
-  results.
+- Add TOTP MFA enrollment/verification and require it for privileged roles.
+- Add login throttling/lockout and authentication audit events.
+- Establish request-scoped tenant context and PostgreSQL row-level security.
+- Add PostgreSQL database-level append-only guards for audit events.
+- Document separate owner/runtime database roles and least-privilege grants.
+- Add PostgreSQL backup, restore, and verification scripts for VPS operations.
+- Exercise migrations and isolation in CI against PostgreSQL as well as SQLite.
+- Update UI, API contract, tests, threat model, and operator documentation.
 
 ## Explicitly out of scope
 
@@ -30,20 +26,21 @@ enforce honest legal states.
 
 ## Acceptance tests
 
-1. A user cannot access another tenant's records through API object IDs.
-2. Unauthenticated API and dashboard requests are rejected safely.
-3. Audit events cannot be updated or deleted through the application model.
-4. A regulation cannot use `VERIFIED` unless its parent source version is
-   approved and has source integrity metadata.
-5. `SOURCE_PENDING` remains distinct from technical and compliance outcomes.
-6. Django system checks and the complete automated test suite pass locally.
-7. Production settings reject missing secrets and unsafe host configuration.
+1. Privileged members cannot use tenant pages until TOTP is enrolled and verified.
+2. Repeated failed logins are throttled without disclosing account existence.
+3. PostgreSQL rejects cross-tenant reads/writes even if an application query
+   accidentally omits its tenant filter.
+4. PostgreSQL rejects update/delete attempts against audit events for the
+   runtime role.
+5. Tenant context is validated against active membership before it reaches SQL.
+6. Backup and restore scripts fail safely and document encrypted off-host use.
+7. Django checks, migrations, SQLite tests, and PostgreSQL CI tests pass.
 
 ## Dependencies
 
 - Python 3.11+ for local Windows development.
-- PostgreSQL for staging/production; SQLite is permitted only for local tests
-  and first-run development.
+- PostgreSQL 17 for security-boundary validation; SQLite remains a convenience
+  for Windows UI development but cannot validate RLS/database triggers.
 - Docker Engine/Compose for container validation and VPS deployment (currently
   unavailable on this Windows workstation).
 - Authenticated Git remote before publishing.
@@ -58,12 +55,10 @@ enforce honest legal states.
 
 ## Security threats addressed in this package
 
-- Cross-tenant object access and insecure direct object references.
-- Accidental use of development settings in production.
-- Secret leakage through committed environment files or logs.
-- Mutation/removal of finalized audit history.
-- Status inflation from unverified legal sources.
-- Direct internet exposure of database, broker, or cache services.
+- Authentication brute force, privileged sessions without MFA, session fixation,
+  cross-tenant SQL access, stale tenant context on pooled connections, audit
+  deletion/tampering, over-privileged runtime database access, and unverified
+  backups.
 
 ## Completion record
 

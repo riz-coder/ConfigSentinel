@@ -3,6 +3,7 @@ from django.db import transaction
 
 from apps.regulatory.models import Regulation, RegulatorySource, RegulatoryVersion
 from apps.tenancy.models import Tenant
+from apps.tenancy.rls import set_rls_context
 
 
 class Command(BaseCommand):
@@ -17,6 +18,7 @@ class Command(BaseCommand):
             tenant = Tenant.objects.get(slug=tenant_slug)
         except Tenant.DoesNotExist as exc:
             raise CommandError(f"Tenant '{tenant_slug}' does not exist.") from exc
+        set_rls_context(tenant_id=tenant.pk)
 
         source, _ = RegulatorySource.objects.get_or_create(
             tenant=tenant,

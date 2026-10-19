@@ -17,7 +17,7 @@ class ImmutableAuditQuerySet(models.QuerySet):
 
 class AuditEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="audit_events")
+    tenant = models.ForeignKey(Tenant, null=True, blank=True, on_delete=models.PROTECT, related_name="audit_events")
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="audit_events")
     action = models.CharField(max_length=120)
     object_type = models.CharField(max_length=120)

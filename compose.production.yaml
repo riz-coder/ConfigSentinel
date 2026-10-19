@@ -1,11 +1,6 @@
 services:
   web:
-    command: gunicorn configsentinel.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile - --error-logfile -
     restart: unless-stopped
-    volumes: []
-    ports: []
-    expose:
-      - "8000"
   db:
     restart: unless-stopped
   proxy:

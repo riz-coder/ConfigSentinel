@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from apps.tenancy.models import Tenant
+from apps.tenancy.rls import set_rls_context
 
 from .models import AuditEvent
 
@@ -11,6 +12,7 @@ class AuditEventImmutabilityTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="auditor")
         self.tenant = Tenant.objects.create(name="Alpha", slug="alpha")
+        set_rls_context(user_id=self.user.pk, tenant_id=self.tenant.pk)
         self.event = AuditEvent.objects.create(
             tenant=self.tenant, actor=self.user, action="test.created", object_type="Test", object_id="1"
         )

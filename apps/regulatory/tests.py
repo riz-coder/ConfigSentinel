@@ -6,9 +6,11 @@ from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from apps.auditlog.models import AuditEvent
 from apps.tenancy.models import Membership, Tenant
+from apps.tenancy.rls import set_rls_context
 
 from .models import LegalSourceStatus, Regulation, RegulatorySource, RegulatoryVersion
 
@@ -17,6 +19,7 @@ class RegulatoryIntegrityTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="legal", password="a-secure-test-password")
         self.tenant = Tenant.objects.create(name="Alpha", slug="alpha")
+        set_rls_context(user_id=self.user.pk, tenant_id=self.tenant.pk)
 
     def test_verified_source_requires_integrity_and_review_metadata(self):
         source = RegulatorySource(tenant=self.tenant, title="Incomplete", legal_status=LegalSourceStatus.VERIFIED)
@@ -62,10 +65,17 @@ class TenantIsolationApiTests(TestCase):
         self.alpha = Tenant.objects.create(name="Alpha", slug="alpha")
         self.beta = Tenant.objects.create(name="Beta", slug="beta")
         Membership.objects.create(user=self.alpha_user, tenant=self.alpha, role=Membership.Role.LEGAL_REVIEWER)
+        set_rls_context(user_id=self.alpha_user.pk, tenant_id=self.alpha.pk)
         self.alpha_source = RegulatorySource.objects.create(tenant=self.alpha, title="Alpha source")
+        set_rls_context(user_id=self.alpha_user.pk, tenant_id=self.beta.pk)
         self.beta_source = RegulatorySource.objects.create(tenant=self.beta, title="Beta secret source")
+        set_rls_context(user_id=self.alpha_user.pk, tenant_id=self.alpha.pk)
         self.client = APIClient()
-        self.client.force_authenticate(self.alpha_user)
+        device = TOTPDevice.objects.create(user=self.alpha_user, name="test", confirmed=True)
+        self.client.force_login(self.alpha_user)
+        session = self.client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
 
     def test_list_only_returns_active_tenant_data(self):
         response = self.client.get("/api/v1/regulatory-sources/")

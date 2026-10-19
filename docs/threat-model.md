@@ -24,11 +24,14 @@ and collector links; administrator access; tenant-to-tenant boundary.
 
 ## Open risks for later packages
 
-- PostgreSQL RLS and a non-owner runtime database role are not implemented yet.
-- MFA/SSO, rate limiting, field-level authorization, malware scanning, encrypted
-  object storage, KMS integration, and backup automation remain open.
-- Model-level append-only protection does not stop a database owner; production
-  database roles and database-level guards are required.
+- Forced PostgreSQL RLS now protects regulatory tenant tables, and the Compose
+  topology separates schema-owner migrations from a non-owner runtime role.
+- TOTP MFA and login throttling are implemented. SSO, MFA recovery governance,
+  field-level authorization, malware scanning, encrypted object storage, KMS
+  integration, and scheduled off-host backups remain open.
+- Audit update/delete is blocked by a PostgreSQL trigger for normal operation;
+  database superusers can still remove controls and must remain inaccessible to
+  the application.
 - Docker deployment has not been executed because Docker is unavailable on the
   current workstation.
 

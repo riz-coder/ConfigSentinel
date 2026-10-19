@@ -30,6 +30,11 @@ The authenticated API contract is available at `/api/v1/openapi/`; regulatory
 sources and regulation slots are exposed below `/api/v1/` and are filtered by
 the user's active tenant membership.
 
+Privileged access requires authenticator-app MFA. After a successful password
+login, a user without a confirmed device is sent to the enrollment QR screen;
+subsequent sessions require a current TOTP code. Five repeated invalid login
+attempts for the same username/IP combination trigger a 30-minute lockout.
+
 ## Tests
 
 ```powershell
@@ -48,9 +53,20 @@ docker compose -f compose.yaml -f compose.production.yaml up -d --build
 ```
 
 The production override places Caddy in front of Django and does not publish
-the application or database port directly. Database backup/restore automation,
-MFA, PostgreSQL RLS, object storage, and worker services are required before
-sensitive customer production use.
+the application or database port directly. MFA, forced PostgreSQL RLS, separate
+database roles, and checksum-verified backup/restore scripts are present.
+Encrypted object storage, automated off-host backup scheduling, restore drills,
+and worker services remain required before sensitive customer production use.
+
+For Docker-based local development use:
+
+```powershell
+docker compose -f compose.yaml -f compose.development.yaml up --build
+```
+
+The migration container uses the database-owner role and exits. The web process
+uses a separate non-superuser runtime role so forced PostgreSQL RLS applies.
+Database role and backup details are in `docs/database-security.md`.
 
 ## Legal status
 

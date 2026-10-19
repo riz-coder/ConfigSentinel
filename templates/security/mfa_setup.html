@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Set up MFA · ConfigSentinel{% endblock %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:auto">
+  <h1>Secure your account</h1>
+  <p>Scan this QR code with an authenticator app. The secret is shown only during enrollment.</p>
+  <p style="text-align:center"><img src="data:image/svg+xml;base64,{{ qr_data }}" alt="TOTP enrollment QR code" width="240" height="240"></p>
+  {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+  <form method="post">{% csrf_token %}<label for="token">6-digit code</label><input id="token" name="token" inputmode="numeric" autocomplete="one-time-code" required maxlength="8"><button type="submit">Enable MFA</button></form>
+</div>
+{% endblock %}
+

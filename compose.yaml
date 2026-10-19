@@ -1,30 +1,45 @@
 services:
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    command: gunicorn configsentinel.wsgi:application --bind 0.0.0.0:8000 --workers 3 --access-logfile - --error-logfile -
     env_file: .env
     environment:
-      CONFIGSENTINEL_DATABASE_URL: postgresql://configsentinel:${CONFIGSENTINEL_POSTGRES_PASSWORD:-local-development-only}@db:5432/configsentinel
-    volumes:
-      - .:/app
-    ports:
-      - "127.0.0.1:8000:8000"
+      CONFIGSENTINEL_DATABASE_URL: postgresql://configsentinel_runtime:${CONFIGSENTINEL_DB_RUNTIME_PASSWORD:-local-runtime-only}@db:5432/configsentinel
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  migrate:
+    build: .
+    command: python manage.py migrate --noinput
+    env_file: .env
+    environment:
+      CONFIGSENTINEL_DATABASE_URL: postgresql://configsentinel_owner:${CONFIGSENTINEL_DB_OWNER_PASSWORD:-local-owner-only}@db:5432/configsentinel
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
   db:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: configsentinel
-      POSTGRES_USER: configsentinel
-      POSTGRES_PASSWORD: ${CONFIGSENTINEL_POSTGRES_PASSWORD:-local-development-only}
+      POSTGRES_USER: configsentinel_owner
+      POSTGRES_PASSWORD: ${CONFIGSENTINEL_DB_OWNER_PASSWORD:-local-owner-only}
+      CONFIGSENTINEL_DB_RUNTIME_PASSWORD: ${CONFIGSENTINEL_DB_RUNTIME_PASSWORD:-local-runtime-only}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U configsentinel"]
+      test: ["CMD-SHELL", "pg_isready -U configsentinel_owner -d configsentinel"]
       interval: 5s
       timeout: 5s
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-runtime-role.sh:/docker-entrypoint-initdb.d/10-runtime-role.sh:ro
 
 volumes:
   postgres_data:

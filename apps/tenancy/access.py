@@ -5,6 +5,8 @@ from .models import Membership, Tenant
 
 
 def tenant_for_request(request) -> Tenant:
+    if hasattr(request, "active_tenant"):
+        return request.active_tenant
     tenant_id = request.headers.get("X-Tenant-ID") or request.GET.get("tenant")
     memberships = Membership.objects.select_related("tenant").filter(user=request.user, is_active=True, tenant__is_active=True)
     if tenant_id:
@@ -14,5 +16,6 @@ def tenant_for_request(request) -> Tenant:
     if membership is None:
         raise PermissionDenied("No active tenant membership is available.")
     request.tenant_membership = membership
+    request.active_tenant = membership.tenant
     return membership.tenant
 

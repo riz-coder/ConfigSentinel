@@ -7,6 +7,7 @@ from rest_framework.schemas import get_schema_view
 
 from apps.regulatory.api import RegulationViewSet, RegulatorySourceViewSet
 from apps.regulatory.views import dashboard
+from apps.security.views import MFASetupView, MFAVerifyView
 
 router = DefaultRouter()
 router.register("regulatory-sources", RegulatorySourceViewSet, basename="regulatory-source")
@@ -18,6 +19,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("accounts/mfa/setup/", MFASetupView.as_view(), name="mfa-setup"),
+    path("accounts/mfa/verify/", MFAVerifyView.as_view(), name="mfa-verify"),
     path("api/v1/", include(router.urls)),
     path("", dashboard, name="dashboard"),
 ]

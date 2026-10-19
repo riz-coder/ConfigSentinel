@@ -10,9 +10,7 @@ from .serializers import RegulationSerializer, RegulatorySourceSerializer
 
 class TenantScopedViewSetMixin:
     def tenant(self):
-        if not hasattr(self.request, "active_tenant"):
-            self.request.active_tenant = tenant_for_request(self.request)
-        return self.request.active_tenant
+        return tenant_for_request(self.request)
 
 
 class RegulatorySourceViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
