@@ -1,0 +1,31 @@
+services:
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    env_file: .env
+    environment:
+      CONFIGSENTINEL_DATABASE_URL: postgresql://configsentinel:${CONFIGSENTINEL_POSTGRES_PASSWORD:-local-development-only}@db:5432/configsentinel
+    volumes:
+      - .:/app
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: configsentinel
+      POSTGRES_USER: configsentinel
+      POSTGRES_PASSWORD: ${CONFIGSENTINEL_POSTGRES_PASSWORD:-local-development-only}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U configsentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+

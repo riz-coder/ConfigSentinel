@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ tenant.name }}</h1>
+<div class="warning"><strong>Legal integrity gate:</strong> SOURCE_PENDING is not compliant, mapped, or implemented. No verified legal conclusion is available without an authenticated source and authorized review.</div>
+<div class="grid">
+  <div class="card"><div>Regulatory sources</div><div class="value">{{ source_count }}</div></div>
+  <div class="card"><div>Verified sources</div><div class="value">{{ verified_source_count }}</div></div>
+  <div class="card"><div>Regulation slots</div><div class="value">{{ regulation_count }}</div></div>
+  <div class="card"><div>Source pending</div><div class="value">{{ source_pending_count }}</div></div>
+</div>
+<div class="card" style="margin-top:1rem"><h2>Sources</h2>
+  <table><thead><tr><th>Title</th><th>Gazette</th><th>Legal status</th></tr></thead><tbody>
+  {% for source in sources %}<tr><td>{{ source.title }}</td><td>{{ source.gazette_identifier|default:"—" }}</td><td>{{ source.legal_status }}</td></tr>{% empty %}<tr><td colspan="3">No regulatory source has been registered.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endblock %}
+

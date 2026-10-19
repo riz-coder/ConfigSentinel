@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ConfigSentinel{% endblock %}</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background:#09111f; color:#e8eef7; }
+    body { margin:0; } header { border-bottom:1px solid #26334a; padding:1rem 2rem; display:flex; justify-content:space-between; }
+    main { max-width:1100px; margin:2rem auto; padding:0 1rem; } a { color:#7dd3fc; } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
+    .card { background:#111c30; border:1px solid #26334a; border-radius:12px; padding:1.2rem; } .value { font-size:2rem; font-weight:700; }
+    .warning { border-left:4px solid #f59e0b; padding:1rem; background:#271c0b; margin-bottom:1.5rem; } table { width:100%; border-collapse:collapse; }
+    th,td { padding:.7rem; border-bottom:1px solid #26334a; text-align:left; } input { width:100%; padding:.7rem; box-sizing:border-box; } button { padding:.7rem 1rem; }
+  </style>
+</head>
+<body>
+  <header><strong>ConfigSentinel Compliance OS</strong>{% if user.is_authenticated %}<span>{{ user.username }} · <form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button type="submit" style="border:0;background:none;color:#7dd3fc;padding:0;cursor:pointer">Sign out</button></form></span>{% endif %}</header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
+
