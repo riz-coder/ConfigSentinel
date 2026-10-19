@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
 from django.urls import reverse
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -44,5 +45,8 @@ class LoginThrottlingTests(TestCase):
             last_response = self.client.post(reverse("login"), {"username": "lock-me", "password": "wrong"})
         self.assertEqual(last_response.status_code, 429)
         events = AuditEvent.objects.filter(action="authentication.password_failed")
-        self.assertEqual(events.count(), 5)
-        self.assertFalse(events.filter(object_id="lock-me").exists())
+        if connection.vendor == "postgresql":
+            self.assertEqual(events.count(), 0, "Tenant context must not expose platform authentication failures")
+        else:
+            self.assertEqual(events.count(), 5)
+            self.assertFalse(events.filter(object_id="lock-me").exists())

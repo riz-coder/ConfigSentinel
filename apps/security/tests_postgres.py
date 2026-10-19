@@ -34,8 +34,12 @@ class PostgreSQLBoundaryTests(TransactionTestCase):
             event = AuditEvent.objects.create(
                 tenant=tenant, actor=user, action="guard.created", object_type="Guard", object_id="1"
             )
-            with self.assertRaises(DatabaseError), transaction.atomic():
-                with connection.cursor() as cursor:
-                    cursor.execute("UPDATE auditlog_auditevent SET action = %s WHERE id = %s", ["tampered", event.pk])
+            with connection.cursor() as cursor:
+                cursor.execute("UPDATE auditlog_auditevent SET action = %s WHERE id = %s", ["tampered", event.pk])
+                self.assertEqual(cursor.rowcount, 0, "Default-deny RLS must block audit updates before the trigger")
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'audit_event_append_only' AND NOT tgisinternal)"
+                )
+                self.assertTrue(cursor.fetchone()[0], "Append-only database trigger must be installed")
             event.refresh_from_db()
             self.assertEqual(event.action, "guard.created")
