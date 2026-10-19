@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import date
 
 from django.contrib.auth import get_user_model
@@ -7,12 +9,15 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 from django_otp.plugins.otp_totp.models import TOTPDevice
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from apps.auditlog.models import AuditEvent
 from apps.tenancy.models import Membership, Tenant
 from apps.tenancy.rls import set_rls_context
 
-from .models import LegalSourceStatus, Regulation, RegulatorySource, RegulatoryVersion
+from .models import LegalSourceStatus, Obligation, Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TrustedSigningKey
+from .services import MAX_MANIFEST_BYTES, canonical_manifest, compare_versions, coverage_report, import_pack, review_version
 
 
 class RegulatoryIntegrityTests(TestCase):
@@ -42,6 +47,7 @@ class RegulatoryIntegrityTests(TestCase):
             legal_status=LegalSourceStatus.VERIFIED,
             reviewed_by=self.user,
             reviewed_at=timezone.now(),
+            verification_completed_at=timezone.now(),
         )
         version = RegulatoryVersion.objects.create(
             source=source, version_label="2025", approval_status=RegulatoryVersion.ApprovalStatus.APPROVED, effective_date=date(2025, 12, 31)
@@ -101,5 +107,110 @@ class TenantIsolationApiTests(TestCase):
         response = self.client.get("/api/v1/openapi/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("openapi", response.content.decode())
+
+
+class RegulatoryPackWorkflowTests(TestCase):
+    def setUp(self):
+        users = get_user_model().objects
+        self.importer = users.create_user(username="importer", password="test-password")
+        self.legal = users.create_user(username="legal-reviewer", password="test-password")
+        self.compliance = users.create_user(username="compliance-reviewer", password="test-password")
+        self.tenant = Tenant.objects.create(name="Pack tenant", slug="pack-tenant")
+        Membership.objects.create(user=self.importer, tenant=self.tenant, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.legal, tenant=self.tenant, role=Membership.Role.LEGAL_REVIEWER)
+        Membership.objects.create(user=self.compliance, tenant=self.tenant, role=Membership.Role.COMPLIANCE_LEAD)
+        set_rls_context(user_id=self.importer.pk, tenant_id=self.tenant.pk)
+        self.private_key = Ed25519PrivateKey.generate()
+        public_raw = self.private_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        self.key = TrustedSigningKey.objects.create(tenant=self.tenant, name="Test publisher", public_key_base64=base64.b64encode(public_raw).decode())
+
+    def manifest(self, label="2025.1", paraphrase="An authenticated test-only paraphrase"):
+        return {
+            "schema_version": 1,
+            "source": {"title": "Test Gazette", "authority_url": "https://example.gov.pk/gazette.pdf", "gazette_identifier": "TEST-GAZETTE-1", "sha256": "a" * 64},
+            "version": {"label": label, "effective_date": "2025-01-01"},
+            "regulations": [{"number": 1, "title": "Test-only regulation", "source_page": "1", "subclauses": [{
+                "path": "1.1", "parent_path": None, "title": "Test-only clause", "source_page": "1",
+                "obligations": [{"key": "TEST-1", "paraphrase": paraphrase, "requirement_type": "TEST", "evidence_specification": "Test artifact", "control_reference": "CTRL-1", "test_procedure_reference": "PROC-1"}],
+            }]}],
+        }
+
+    def signed(self, data):
+        body = json.dumps(data, indent=2).encode()
+        return body, self.private_key.sign(canonical_manifest(data))
+
+    def do_import(self, data=None):
+        body, signature = self.signed(data or self.manifest())
+        return import_pack(tenant=self.tenant, actor=self.importer, signing_key=self.key, manifest_bytes=body, signature_bytes=signature)
+
+    def test_signed_import_is_atomic_and_source_pending(self):
+        version = self.do_import()
+        self.assertEqual(version.approval_status, RegulatoryVersion.ApprovalStatus.UNDER_REVIEW)
+        self.assertEqual(version.source.legal_status, LegalSourceStatus.SOURCE_PENDING)
+        self.assertEqual(Obligation.objects.filter(subclause__regulation__version=version).count(), 1)
+
+    def test_invalid_signature_creates_nothing(self):
+        body, _ = self.signed(self.manifest())
+        with self.assertRaises(ValidationError):
+            import_pack(tenant=self.tenant, actor=self.importer, signing_key=self.key, manifest_bytes=body, signature_bytes=b"x" * 64)
+        self.assertEqual(RegulatoryVersion.objects.count(), 0)
+
+    def test_oversized_manifest_creates_nothing(self):
+        with self.assertRaises(ValidationError):
+            import_pack(
+                tenant=self.tenant, actor=self.importer, signing_key=self.key,
+                manifest_bytes=b"x" * (MAX_MANIFEST_BYTES + 1), signature_bytes=b"x" * 64,
+            )
+        self.assertEqual(RegulatoryVersion.objects.count(), 0)
+
+    def test_duplicate_clause_path_creates_nothing(self):
+        data = self.manifest()
+        data["regulations"][0]["subclauses"].append(dict(data["regulations"][0]["subclauses"][0]))
+        body, signature = self.signed(data)
+        with self.assertRaises(ValidationError):
+            import_pack(tenant=self.tenant, actor=self.importer, signing_key=self.key, manifest_bytes=body, signature_bytes=signature)
+        self.assertEqual(RegulatoryVersion.objects.count(), 0)
+
+    def test_two_distinct_authorized_reviews_verify_content_but_not_coverage(self):
+        version = self.do_import()
+        review_version(version=version, reviewer=self.legal, kind=RegulatoryReview.Kind.LEGAL, decision=RegulatoryReview.Decision.APPROVED)
+        review_version(version=version, reviewer=self.compliance, kind=RegulatoryReview.Kind.COMPLIANCE, decision=RegulatoryReview.Decision.APPROVED)
+        version.refresh_from_db()
+        self.assertEqual(version.approval_status, RegulatoryVersion.ApprovalStatus.APPROVED)
+        self.assertEqual(version.source.legal_status, LegalSourceStatus.VERIFIED)
+        self.assertFalse(coverage_report(version)["ready"])
+        self.assertIn("NUMBERED_REGULATION_COVERAGE_INCOMPLETE", coverage_report(version)["issues"])
+
+    def test_same_person_cannot_complete_both_reviews_after_role_change(self):
+        version = self.do_import()
+        review_version(version=version, reviewer=self.legal, kind=RegulatoryReview.Kind.LEGAL, decision=RegulatoryReview.Decision.APPROVED)
+        Membership.objects.filter(user=self.legal, tenant=self.tenant).update(role=Membership.Role.COMPLIANCE_LEAD)
+        with self.assertRaises(ValidationError):
+            review_version(version=version, reviewer=self.legal, kind=RegulatoryReview.Kind.COMPLIANCE, decision=RegulatoryReview.Decision.APPROVED)
+
+    def test_version_diff_is_deterministic(self):
+        first = self.do_import()
+        second = self.do_import(self.manifest(label="2025.2", paraphrase="Changed test-only paraphrase"))
+        self.assertEqual(compare_versions(first, second), {"added": [], "removed": [], "changed": ["R01/1.1/TEST-1"]})
+
+    def test_api_rejects_cross_tenant_signing_key(self):
+        other = Tenant.objects.create(name="Other", slug="other-pack")
+        set_rls_context(user_id=self.importer.pk, tenant_id=other.pk)
+        other_key = TrustedSigningKey.objects.create(tenant=other, name="Other", public_key_base64=self.key.public_key_base64)
+        set_rls_context(user_id=self.importer.pk, tenant_id=self.tenant.pk)
+        client = APIClient()
+        device = TOTPDevice.objects.create(user=self.importer, name="pack-test", confirmed=True)
+        client.force_login(self.importer)
+        session = client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        body, signature = self.signed(self.manifest())
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        response = client.post("/api/v1/regulatory-versions/import/", {
+            "signing_key": str(other_key.pk), "manifest": SimpleUploadedFile("pack.json", body),
+            "signature": SimpleUploadedFile("pack.sig", signature),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(AuditEvent.objects.filter(tenant=self.tenant, action="regulatory_pack.import_denied").exists())
 
 

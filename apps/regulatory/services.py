@@ -1,0 +1,265 @@
+import base64
+import hashlib
+import json
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
+from django.utils import timezone
+from jsonschema import Draft202012Validator, FormatChecker
+
+from apps.auditlog.models import AuditEvent
+from apps.tenancy.models import Membership
+
+from .models import (
+    LegalSourceStatus,
+    Obligation,
+    Regulation,
+    RegulatoryImportBatch,
+    RegulatoryReview,
+    RegulatorySource,
+    RegulatoryVersion,
+    SubClause,
+    TrustedSigningKey,
+)
+
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+PACK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema_version", "source", "version", "regulations"],
+    "properties": {
+        "schema_version": {"const": 1},
+        "source": {
+            "type": "object", "additionalProperties": False,
+            "required": ["title", "authority_url", "gazette_identifier", "sha256"],
+            "properties": {
+                "title": {"type": "string", "minLength": 1, "maxLength": 255},
+                "authority_url": {"type": "string", "format": "uri", "maxLength": 500},
+                "gazette_identifier": {"type": "string", "minLength": 1, "maxLength": 120},
+                "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+            },
+        },
+        "version": {
+            "type": "object", "additionalProperties": False,
+            "required": ["label"],
+            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 80}, "effective_date": {"type": ["string", "null"], "format": "date"}},
+        },
+        "regulations": {
+            "type": "array", "minItems": 1, "maxItems": 84,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["number", "title", "source_page", "subclauses"],
+                "properties": {
+                    "number": {"type": "integer", "minimum": 1, "maximum": 84},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 255},
+                    "source_page": {"type": "string", "minLength": 1, "maxLength": 40},
+                    "subclauses": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/subclause"}},
+                },
+            },
+        },
+    },
+    "$defs": {
+        "subclause": {
+            "type": "object", "additionalProperties": False,
+            "required": ["path", "title", "source_page", "obligations"],
+            "properties": {
+                "path": {"type": "string", "minLength": 1, "maxLength": 120},
+                "parent_path": {"type": ["string", "null"], "maxLength": 120},
+                "title": {"type": "string", "minLength": 1, "maxLength": 500},
+                "source_page": {"type": "string", "minLength": 1, "maxLength": 40},
+                "obligations": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/obligation"}},
+            },
+        },
+        "obligation": {
+            "type": "object", "additionalProperties": False,
+            "required": ["key", "paraphrase", "requirement_type"],
+            "properties": {
+                "key": {"type": "string", "minLength": 1, "maxLength": 120},
+                "paraphrase": {"type": "string", "minLength": 1, "maxLength": 10000},
+                "requirement_type": {"type": "string", "minLength": 1, "maxLength": 80},
+                "evidence_specification": {"type": "string", "maxLength": 10000},
+                "control_reference": {"type": "string", "maxLength": 120},
+                "test_procedure_reference": {"type": "string", "maxLength": 120},
+            },
+        },
+    },
+}
+
+
+def canonical_manifest(data):
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def parse_and_verify(manifest_bytes, signature_bytes, signing_key):
+    if len(manifest_bytes) > MAX_MANIFEST_BYTES:
+        raise ValidationError("Manifest exceeds the 2 MiB limit.")
+    try:
+        data = json.loads(manifest_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValidationError("Manifest must be valid UTF-8 JSON.") from exc
+    errors = sorted(
+        Draft202012Validator(PACK_SCHEMA, format_checker=FormatChecker()).iter_errors(data),
+        key=lambda item: list(item.path),
+    )
+    if errors:
+        error = errors[0]
+        raise ValidationError(f"Manifest schema error at {list(error.path)}: {error.message}")
+    canonical = canonical_manifest(data)
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(signing_key.public_key_base64, validate=True))
+        public_key.verify(signature_bytes, canonical)
+    except (InvalidSignature, ValueError) as exc:
+        raise ValidationError("Regulatory pack signature is invalid.") from exc
+    return data, canonical
+
+
+def _validate_uniqueness(data):
+    numbers = [item["number"] for item in data["regulations"]]
+    if len(numbers) != len(set(numbers)):
+        raise ValidationError("Regulation numbers must be unique within a pack.")
+    for regulation in data["regulations"]:
+        paths = [item["path"] for item in regulation["subclauses"]]
+        if len(paths) != len(set(paths)):
+            raise ValidationError(f"Duplicate subclause path in regulation {regulation['number']}.")
+        path_set = set(paths)
+        parents = {item["path"]: item.get("parent_path") for item in regulation["subclauses"]}
+        for clause in regulation["subclauses"]:
+            if clause.get("parent_path") and clause["parent_path"] not in path_set:
+                raise ValidationError(f"Unknown parent path {clause['parent_path']}.")
+            keys = [item["key"] for item in clause["obligations"]]
+            if len(keys) != len(set(keys)):
+                raise ValidationError(f"Duplicate obligation key under {clause['path']}.")
+        for path in paths:
+            visited, cursor = set(), path
+            while parents.get(cursor):
+                if cursor in visited:
+                    raise ValidationError(f"Cyclic subclause hierarchy in regulation {regulation['number']}.")
+                visited.add(cursor)
+                cursor = parents[cursor]
+
+
+@transaction.atomic
+def import_pack(*, tenant, actor, signing_key, manifest_bytes, signature_bytes):
+    if signing_key.tenant_id != tenant.id or not signing_key.is_active:
+        raise PermissionDenied("Signing key is not active for this tenant.")
+    data, canonical = parse_and_verify(manifest_bytes, signature_bytes, signing_key)
+    _validate_uniqueness(data)
+    source_data = data["source"]
+    source, created = RegulatorySource.objects.get_or_create(
+        tenant=tenant, gazette_identifier=source_data["gazette_identifier"],
+        defaults={"title": source_data["title"], "authority_url": source_data["authority_url"], "sha256": source_data["sha256"].lower()},
+    )
+    if source.sha256 and source.sha256.lower() != source_data["sha256"].lower():
+        raise ValidationError("Gazette identifier already exists with a different source hash.")
+    if not created:
+        source.title = source_data["title"]
+        source.authority_url = source_data["authority_url"]
+        source.sha256 = source_data["sha256"].lower()
+        source.save(update_fields=["title", "authority_url", "sha256"])
+    version_data = data["version"]
+    if RegulatoryVersion.objects.filter(source=source, version_label=version_data["label"]).exists():
+        raise ValidationError("This source version has already been imported.")
+    version = RegulatoryVersion.objects.create(
+        source=source, version_label=version_data["label"], effective_date=version_data.get("effective_date"),
+        approval_status=RegulatoryVersion.ApprovalStatus.UNDER_REVIEW,
+    )
+    for regulation_data in data["regulations"]:
+        regulation = Regulation.objects.create(
+            version=version, number=regulation_data["number"], title=regulation_data["title"], source_page=regulation_data["source_page"],
+        )
+        clauses = {}
+        for clause_data in regulation_data["subclauses"]:
+            clauses[clause_data["path"]] = SubClause.objects.create(
+                regulation=regulation, clause_path=clause_data["path"], title=clause_data["title"], source_page=clause_data["source_page"],
+            )
+        for clause_data in regulation_data["subclauses"]:
+            clause = clauses[clause_data["path"]]
+            if clause_data.get("parent_path"):
+                clause.parent = clauses[clause_data["parent_path"]]
+                clause.save(update_fields=["parent"])
+            for obligation_data in clause_data["obligations"]:
+                Obligation.objects.create(
+                    subclause=clause, obligation_key=obligation_data["key"], paraphrase=obligation_data["paraphrase"],
+                    requirement_type=obligation_data["requirement_type"], evidence_specification=obligation_data.get("evidence_specification", ""),
+                    control_reference=obligation_data.get("control_reference", ""), test_procedure_reference=obligation_data.get("test_procedure_reference", ""),
+                )
+    batch = RegulatoryImportBatch.objects.create(
+        tenant=tenant, version=version, signing_key=signing_key, manifest_sha256=hashlib.sha256(canonical).hexdigest(),
+        signature_base64=base64.b64encode(signature_bytes).decode(), imported_by=actor,
+    )
+    AuditEvent.objects.create(tenant=tenant, actor=actor, action="regulatory_pack.imported", object_type="RegulatoryImportBatch", object_id=str(batch.id), metadata={"manifest_sha256": batch.manifest_sha256})
+    return version
+
+
+@transaction.atomic
+def review_version(*, version, reviewer, kind, decision, note=""):
+    if kind not in RegulatoryReview.Kind.values or decision not in RegulatoryReview.Decision.values:
+        raise ValidationError("Valid review kind and decision are required.")
+    if version.approval_status != RegulatoryVersion.ApprovalStatus.UNDER_REVIEW:
+        raise ValidationError("Only versions under review can receive a decision.")
+    membership = Membership.objects.filter(user=reviewer, tenant=version.source.tenant, is_active=True).first()
+    required_role = Membership.Role.LEGAL_REVIEWER if kind == RegulatoryReview.Kind.LEGAL else Membership.Role.COMPLIANCE_LEAD
+    if membership is None or membership.role != required_role:
+        raise PermissionDenied(f"{required_role} membership is required for this review.")
+    if version.reviews.filter(reviewer=reviewer).exists():
+        raise ValidationError("The same person cannot perform both regulatory reviews.")
+    review = RegulatoryReview.objects.create(version=version, reviewer=reviewer, kind=kind, decision=decision, note=note)
+    approvals = version.reviews.filter(decision=RegulatoryReview.Decision.APPROVED)
+    if decision == RegulatoryReview.Decision.REJECTED:
+        version.approval_status = RegulatoryVersion.ApprovalStatus.DRAFT
+        version.save(update_fields=["approval_status"])
+    elif approvals.filter(kind=RegulatoryReview.Kind.LEGAL).exists() and approvals.filter(kind=RegulatoryReview.Kind.COMPLIANCE).exists():
+        now = timezone.now()
+        source = version.source
+        source.legal_status = LegalSourceStatus.VERIFIED
+        source.reviewed_by = reviewer
+        source.reviewed_at = now
+        source.verification_completed_at = now
+        source.save()
+        version.approval_status = RegulatoryVersion.ApprovalStatus.APPROVED
+        version.save(update_fields=["approval_status"])
+        version.regulations.update(legal_status=LegalSourceStatus.VERIFIED)
+        SubClause.objects.filter(regulation__version=version).update(legal_status=LegalSourceStatus.VERIFIED)
+        Obligation.objects.filter(subclause__regulation__version=version).update(legal_status=LegalSourceStatus.VERIFIED)
+    AuditEvent.objects.create(tenant=version.source.tenant, actor=reviewer, action="regulatory_version.reviewed", object_type="RegulatoryVersion", object_id=str(version.id), metadata={"kind": kind, "decision": decision})
+    return review
+
+
+def coverage_report(version):
+    obligations = Obligation.objects.filter(subclause__regulation__version=version)
+    issues = []
+    if version.source.legal_status != LegalSourceStatus.VERIFIED:
+        issues.append("LEGAL_SOURCE_UNVERIFIED")
+    if version.approval_status != RegulatoryVersion.ApprovalStatus.APPROVED:
+        issues.append("DUAL_REVIEW_INCOMPLETE")
+    if version.regulations.count() != 84:
+        issues.append("NUMBERED_REGULATION_COVERAGE_INCOMPLETE")
+    if not obligations.exists():
+        issues.append("NO_OBLIGATIONS_IMPORTED")
+    if obligations.filter(control_reference="").exists():
+        issues.append("CONTROL_MAPPING_MISSING")
+    if obligations.filter(test_procedure_reference="").exists():
+        issues.append("TEST_PROCEDURE_MISSING")
+    if obligations.filter(evidence_specification="").exists():
+        issues.append("EVIDENCE_SPECIFICATION_MISSING")
+    return {"ready": not issues, "issues": issues, "regulations": version.regulations.count(), "obligations": obligations.count()}
+
+
+def compare_versions(base, target):
+    def snapshot(version):
+        result = {}
+        for regulation in version.regulations.prefetch_related("subclauses__obligations"):
+            result[f"R{regulation.number:02d}"] = {"title": regulation.title, "page": regulation.source_page}
+            for clause in regulation.subclauses.all():
+                result[f"R{regulation.number:02d}/{clause.clause_path}"] = {"title": clause.title, "page": clause.source_page}
+                for obligation in clause.obligations.all():
+                    result[f"R{regulation.number:02d}/{clause.clause_path}/{obligation.obligation_key}"] = {"paraphrase": obligation.paraphrase, "type": obligation.requirement_type}
+        return result
+    before, after = snapshot(base), snapshot(target)
+    return {
+        "added": sorted(after.keys() - before.keys()),
+        "removed": sorted(before.keys() - after.keys()),
+        "changed": sorted(key for key in before.keys() & after.keys() if before[key] != after[key]),
+    }

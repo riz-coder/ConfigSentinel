@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Regulatory packs · ConfigSentinel{% endblock %}
+{% block content %}
+<p><a href="{% url 'dashboard' %}">← Dashboard</a></p>
+<h1>Regulatory pack center</h1>
+<div class="warning"><strong>Legal integrity gate:</strong> an imported pack remains SOURCE_PENDING until two distinct authorized people complete legal and compliance approval. Coverage gaps never count as passes.</div>
+{% for message in messages %}<div class="card" style="margin-bottom:1rem">{{ message }}</div>{% endfor %}
+{% if can_import %}
+<div class="card">
+  <h2>Import signed pack</h2>
+  <form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="operation" value="import">
+    <p><label>Trusted key<select name="signing_key" required style="width:100%;padding:.7rem">{% for key in signing_keys %}<option value="{{ key.id }}">{{ key.name }} · {{ key.fingerprint|slice:":12" }}…</option>{% endfor %}</select></label></p>
+    <p><label>Manifest JSON<input type="file" name="manifest" accept="application/json,.json" required></label></p>
+    <p><label>Detached Ed25519 signature<input type="file" name="signature" required></label></p>
+    <button type="submit" {% if not signing_keys %}disabled{% endif %}>Verify and import</button>
+    {% if not signing_keys %}<p>A tenant owner must register a trusted public signing key first.</p>{% endif %}
+  </form>
+</div>
+{% endif %}
+<h2>Versions</h2>
+{% for version in versions %}
+<div class="card" style="margin-bottom:1rem">
+  <h3>{{ version.source.title }} · {{ version.version_label }}</h3>
+  <p>Status: <strong>{{ version.approval_status }}</strong> / {{ version.source.legal_status }} · Regulations: {{ version.coverage.regulations }} · Obligations: {{ version.coverage.obligations }}</p>
+  <p>Coverage ready: <strong>{{ version.coverage.ready|yesno:"YES,NO" }}</strong>{% if version.coverage.issues %} · {{ version.coverage.issues|join:", " }}{% endif %}</p>
+  <p>Reviews: {% for review in version.reviews.all %}{{ review.kind }}={{ review.decision }} by {{ review.reviewer.username }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}</p>
+  {% if review_kind and version.approval_status == "UNDER_REVIEW" %}
+  <form method="post">{% csrf_token %}<input type="hidden" name="operation" value="review"><input type="hidden" name="version" value="{{ version.id }}"><input type="hidden" name="kind" value="{{ review_kind }}">
+    <label>Review note<input name="note" maxlength="2000"></label>
+    <button name="decision" value="APPROVED">Approve {{ review_kind|lower }}</button> <button name="decision" value="REJECTED">Reject</button>
+  </form>
+  {% endif %}
+</div>
+{% empty %}<div class="card">No signed regulatory pack has been imported.</div>{% endfor %}
+{% endblock %}

@@ -3,7 +3,9 @@ from django.db import DatabaseError, connection, transaction
 from django.test import TransactionTestCase, skipUnlessDBFeature
 
 from apps.auditlog.models import AuditEvent
-from apps.regulatory.models import RegulatorySource
+import base64
+
+from apps.regulatory.models import Regulation, RegulatorySource, RegulatoryVersion, SubClause, TrustedSigningKey
 from apps.tenancy.models import Tenant
 from apps.tenancy.rls import set_rls_context
 
@@ -22,6 +24,23 @@ class PostgreSQLBoundaryTests(TransactionTestCase):
             self.assertFalse(RegulatorySource.objects.filter(pk=source.pk).exists())
             with self.assertRaises(DatabaseError), transaction.atomic():
                 RegulatorySource.objects.create(tenant=alpha, title="Blocked cross-tenant write")
+
+    @skipUnlessDBFeature("supports_transactions")
+    def test_pack_tables_inherit_forced_tenant_boundary(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL-specific RLS test")
+        alpha = Tenant.objects.create(name="Pack RLS Alpha", slug="pack-rls-alpha")
+        beta = Tenant.objects.create(name="Pack RLS Beta", slug="pack-rls-beta")
+        with transaction.atomic():
+            set_rls_context(tenant_id=alpha.pk)
+            key = TrustedSigningKey.objects.create(tenant=alpha, name="Alpha key", public_key_base64=base64.b64encode(b"a" * 32).decode())
+            source = RegulatorySource.objects.create(tenant=alpha, title="Alpha pack")
+            version = RegulatoryVersion.objects.create(source=source, version_label="test")
+            regulation = Regulation.objects.create(version=version, number=1)
+            clause = SubClause.objects.create(regulation=regulation, clause_path="1.1", title="Test", source_page="1")
+            set_rls_context(tenant_id=beta.pk)
+            self.assertFalse(TrustedSigningKey.objects.filter(pk=key.pk).exists())
+            self.assertFalse(SubClause.objects.filter(pk=clause.pk).exists())
 
     @skipUnlessDBFeature("supports_transactions")
     def test_database_trigger_rejects_raw_audit_mutation(self):

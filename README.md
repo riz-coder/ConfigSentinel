@@ -30,6 +30,12 @@ The authenticated API contract is available at `/api/v1/openapi/`; regulatory
 sources and regulation slots are exposed below `/api/v1/` and are filtered by
 the user's active tenant membership.
 
+Signed regulatory packs are managed at `/regulatory/`. Tenant owners register
+an Ed25519 public key through the admin or API, after which an owner/legal
+reviewer can import a detached-signature JSON pack. Imported content stays
+`SOURCE_PENDING` until separate legal and compliance reviewers approve it.
+See `docs/regulatory-pack-format.md` for the canonical signing contract.
+
 Privileged access requires authenticator-app MFA. After a successful password
 login, a user without a confirmed device is sent to the enrollment QR screen;
 subsequent sessions require a current TOTP code. Five repeated invalid login
@@ -70,6 +76,6 @@ Database role and backup details are in `docs/database-security.md`.
 
 ## Legal status
 
-The authenticated complete CTDISR 2025 Gazette is not present. All placeholder
-regulations remain `SOURCE_PENDING`. See `PLAN.md` for package boundaries and
-known blockers.
+The authenticated complete CTDISR 2025 Gazette is not present. Placeholder and
+unapproved imported regulations remain `SOURCE_PENDING`. See `PLAN.md` for
+package boundaries and known blockers.

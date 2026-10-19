@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ tenant.name }}</h1>
+<p><a href="{% url 'regulatory-center' %}">Open regulatory pack center →</a></p>
 <div class="warning"><strong>Legal integrity gate:</strong> SOURCE_PENDING is not compliant, mapped, or implemented. No verified legal conclusion is available without an authenticated source and authorized review.</div>
 <div class="grid">
   <div class="card"><div>Regulatory sources</div><div class="value">{{ source_count }}</div></div>
