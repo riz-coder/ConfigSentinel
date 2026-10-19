@@ -83,6 +83,8 @@ version comparison, and honest coverage gates.
   SQLite, with 3 PostgreSQL-only boundary tests explicitly skipped locally.
 - `.venv\\Scripts\\python.exe manage.py makemigrations --check --dry-run` — no
   changes detected.
+- GitHub Actions run `39246532012` — SQLite and PostgreSQL 17 jobs passed; the
+  PostgreSQL job exercised forced RLS for signing keys and nested pack content.
 - Production-shaped `manage.py check --deploy` with debug disabled, strong
   secret, allowed host, trusted origin, and HTTPS settings — no issues.
 - PowerShell backup/restore scripts parsed successfully; Compose and CI YAML
