@@ -82,6 +82,8 @@ maker-checker approval and immutable history.
   SQLite, with 4 PostgreSQL-only boundary tests explicitly skipped locally.
 - `.venv\\Scripts\\python.exe manage.py makemigrations --check --dry-run` — no
   changes detected.
+- GitHub Actions run `39248327450` — SQLite and PostgreSQL 17 jobs passed; the
+  PostgreSQL job exercised mapping-table RLS and finalized-record triggers.
 - Production-shaped `manage.py check --deploy` with debug disabled, strong
   secret, allowed host, trusted origin, and HTTPS settings — no issues.
 - PowerShell backup/restore scripts parsed successfully; Compose and CI YAML
