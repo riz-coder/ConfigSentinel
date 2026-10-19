@@ -16,8 +16,12 @@ from apps.auditlog.models import AuditEvent
 from apps.tenancy.models import Membership, Tenant
 from apps.tenancy.rls import set_rls_context
 
-from .models import LegalSourceStatus, Obligation, Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TrustedSigningKey
-from .services import MAX_MANIFEST_BYTES, canonical_manifest, compare_versions, coverage_report, import_pack, review_version
+from .models import (
+    ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
+    ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
+    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey,
+)
+from .services import MAX_MANIFEST_BYTES, canonical_manifest, compare_versions, coverage_report, create_mapping, import_pack, review_mapping, review_version
 
 
 class RegulatoryIntegrityTests(TestCase):
@@ -212,5 +216,116 @@ class RegulatoryPackWorkflowTests(TestCase):
         }, format="multipart")
         self.assertEqual(response.status_code, 400)
         self.assertTrue(AuditEvent.objects.filter(tenant=self.tenant, action="regulatory_pack.import_denied").exists())
+
+
+class ObligationMappingWorkflowTests(TestCase):
+    def setUp(self):
+        users = get_user_model().objects
+        self.author = users.create_user(username="mapping-author", password="test-password")
+        self.legal = users.create_user(username="mapping-legal", password="test-password")
+        self.compliance = users.create_user(username="mapping-compliance", password="test-password")
+        self.tenant = Tenant.objects.create(name="Mapping tenant", slug="mapping-tenant")
+        Membership.objects.create(user=self.author, tenant=self.tenant, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.legal, tenant=self.tenant, role=Membership.Role.LEGAL_REVIEWER)
+        Membership.objects.create(user=self.compliance, tenant=self.tenant, role=Membership.Role.COMPLIANCE_LEAD)
+        set_rls_context(user_id=self.author.pk, tenant_id=self.tenant.pk)
+        now = timezone.now()
+        source = RegulatorySource.objects.create(
+            tenant=self.tenant, title="Verified test source", authority_url="https://example.gov.pk/test.pdf",
+            gazette_identifier="MAPPING-TEST", sha256="b" * 64, legal_status=LegalSourceStatus.VERIFIED,
+            reviewed_by=self.legal, reviewed_at=now, verification_completed_at=now,
+        )
+        self.version = RegulatoryVersion.objects.create(source=source, version_label="mapping-test", approval_status=RegulatoryVersion.ApprovalStatus.APPROVED)
+        regulation = Regulation.objects.create(version=self.version, number=1, title="Verified test regulation", source_page="1", legal_status=LegalSourceStatus.VERIFIED)
+        clause = SubClause.objects.create(regulation=regulation, clause_path="1.1", title="Verified test clause", source_page="1", legal_status=LegalSourceStatus.VERIFIED)
+        self.obligation = Obligation.objects.create(subclause=clause, obligation_key="OBL-1", paraphrase="Test only", requirement_type="TEST", legal_status=LegalSourceStatus.VERIFIED)
+        self.control = ControlDefinition.objects.create(tenant=self.tenant, control_key="CTRL-1", version=1, title="Test control", description="Test", created_by=self.author)
+        self.procedure = TestProcedure.objects.create(tenant=self.tenant, control=self.control, procedure_key="PROC-1", version=1, title="Test procedure", procedure="Read-only inspection", expected_result="Documented result", created_by=self.author)
+        self.requirement = EvidenceRequirement.objects.create(tenant=self.tenant, test_procedure=self.procedure, requirement_key="EVID-1", version=1, title="Test evidence", description="Test artifact", created_by=self.author)
+
+    def mapping(self):
+        return create_mapping(
+            tenant=self.tenant, actor=self.author, obligation=self.obligation, control=self.control,
+            test_procedure=self.procedure, evidence_requirement=self.requirement, rationale="Exact test mapping",
+        )
+
+    def test_unverified_obligation_cannot_be_mapped(self):
+        self.obligation.legal_status = LegalSourceStatus.SOURCE_PENDING
+        self.obligation.save()
+        with self.assertRaises(ValidationError):
+            self.mapping()
+        self.assertEqual(ObligationControlMapping.objects.count(), 0)
+
+    def test_mismatched_control_test_chain_is_rejected(self):
+        other = ControlDefinition.objects.create(tenant=self.tenant, control_key="CTRL-2", version=1, title="Other", description="Other", created_by=self.author)
+        with self.assertRaises(ValidationError):
+            create_mapping(
+                tenant=self.tenant, actor=self.author, obligation=self.obligation, control=other,
+                test_procedure=self.procedure, evidence_requirement=self.requirement, rationale="Invalid chain",
+            )
+
+    def test_author_cannot_review_own_mapping(self):
+        mapping = self.mapping()
+        Membership.objects.filter(user=self.author, tenant=self.tenant).update(role=Membership.Role.COMPLIANCE_LEAD)
+        with self.assertRaises(ValidationError):
+            review_mapping(mapping=mapping, reviewer=self.author, kind=MappingReview.Kind.COMPLIANCE, decision=MappingReview.Decision.APPROVED)
+
+    def test_dual_review_finalizes_mapping_and_updates_coverage(self):
+        mapping = self.mapping()
+        review_mapping(mapping=mapping, reviewer=self.legal, kind=MappingReview.Kind.LEGAL, decision=MappingReview.Decision.APPROVED)
+        report = coverage_report(self.version)
+        self.assertIn("CONTROL_MAPPING_MISSING", report["issues"])
+        review_mapping(mapping=mapping, reviewer=self.compliance, kind=MappingReview.Kind.COMPLIANCE, decision=MappingReview.Decision.APPROVED)
+        mapping.refresh_from_db()
+        report = coverage_report(self.version)
+        self.assertEqual(mapping.status, ObligationControlMapping.Status.APPROVED)
+        self.assertEqual(report["approved_mappings"], 1)
+        self.assertNotIn("CONTROL_MAPPING_MISSING", report["issues"])
+        self.assertNotIn("TEST_PROCEDURE_MISSING", report["issues"])
+        self.assertNotIn("EVIDENCE_SPECIFICATION_MISSING", report["issues"])
+
+    def test_finalized_mapping_and_reviews_are_immutable(self):
+        mapping = self.mapping()
+        review = review_mapping(mapping=mapping, reviewer=self.legal, kind=MappingReview.Kind.LEGAL, decision=MappingReview.Decision.REJECTED)
+        mapping.refresh_from_db()
+        mapping.rationale = "Mutated"
+        with self.assertRaises(ValidationError):
+            mapping.save()
+        review.note = "Mutated"
+        with self.assertRaises(ValidationError):
+            review.save()
+        with self.assertRaises(ValidationError):
+            review.delete()
+
+    def test_api_cross_tenant_mapping_reference_is_denied_and_audited(self):
+        other = Tenant.objects.create(name="Other mapping", slug="other-mapping")
+        Membership.objects.create(user=self.author, tenant=other, role=Membership.Role.OWNER)
+        set_rls_context(user_id=self.author.pk, tenant_id=other.pk)
+        foreign_control = ControlDefinition.objects.create(tenant=other, control_key="FOREIGN", version=1, title="Foreign", description="Foreign", created_by=self.author)
+        set_rls_context(user_id=self.author.pk, tenant_id=self.tenant.pk)
+        client = APIClient()
+        device = TOTPDevice.objects.create(user=self.author, name="mapping-api", confirmed=True)
+        client.force_login(self.author)
+        session = client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        response = client.post("/api/v1/obligation-mappings/", {
+            "obligation": str(self.obligation.pk), "control": str(foreign_control.pk),
+            "test_procedure": str(self.procedure.pk), "evidence_requirement": str(self.requirement.pk),
+            "rationale": "Cross tenant attempt",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(AuditEvent.objects.filter(tenant=self.tenant, action="obligation_mapping.denied").exists())
+
+    def test_mapping_center_renders_for_authenticated_member(self):
+        client = APIClient()
+        device = TOTPDevice.objects.create(user=self.author, name="mapping-ui", confirmed=True)
+        client.force_login(self.author)
+        session = client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        response = client.get("/regulatory/mappings/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Control, test and evidence mappings")
 
 

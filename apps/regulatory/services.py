@@ -14,7 +14,9 @@ from apps.tenancy.models import Membership
 
 from .models import (
     LegalSourceStatus,
+    MappingReview,
     Obligation,
+    ObligationControlMapping,
     Regulation,
     RegulatoryImportBatch,
     RegulatoryReview,
@@ -238,13 +240,21 @@ def coverage_report(version):
         issues.append("NUMBERED_REGULATION_COVERAGE_INCOMPLETE")
     if not obligations.exists():
         issues.append("NO_OBLIGATIONS_IMPORTED")
-    if obligations.filter(control_reference="").exists():
+    unmapped = obligations.exclude(control_mappings__status=ObligationControlMapping.Status.APPROVED)
+    if unmapped.exists():
         issues.append("CONTROL_MAPPING_MISSING")
-    if obligations.filter(test_procedure_reference="").exists():
+    if unmapped.exists():
         issues.append("TEST_PROCEDURE_MISSING")
-    if obligations.filter(evidence_specification="").exists():
+    if unmapped.exists():
         issues.append("EVIDENCE_SPECIFICATION_MISSING")
-    return {"ready": not issues, "issues": issues, "regulations": version.regulations.count(), "obligations": obligations.count()}
+    return {
+        "ready": not issues, "issues": issues, "regulations": version.regulations.count(),
+        "obligations": obligations.count(),
+        "approved_mappings": ObligationControlMapping.objects.filter(
+            obligation__subclause__regulation__version=version,
+            status=ObligationControlMapping.Status.APPROVED,
+        ).count(),
+    }
 
 
 def compare_versions(base, target):
@@ -263,3 +273,53 @@ def compare_versions(base, target):
         "removed": sorted(before.keys() - after.keys()),
         "changed": sorted(key for key in before.keys() & after.keys() if before[key] != after[key]),
     }
+
+
+@transaction.atomic
+def create_mapping(*, tenant, actor, obligation, control, test_procedure, evidence_requirement, rationale):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+        raise PermissionDenied("Only tenant owners or compliance leads may submit mappings.")
+    mapping = ObligationControlMapping(
+        tenant=tenant, obligation=obligation, control=control, test_procedure=test_procedure,
+        evidence_requirement=evidence_requirement, rationale=rationale, created_by=actor,
+    )
+    mapping.save()
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="obligation_mapping.submitted",
+        object_type="ObligationControlMapping", object_id=str(mapping.id), metadata={"status": mapping.status},
+    )
+    return mapping
+
+
+@transaction.atomic
+def review_mapping(*, mapping, reviewer, kind, decision, note=""):
+    mapping = ObligationControlMapping.objects.select_for_update().select_related("tenant").get(pk=mapping.pk)
+    if kind not in MappingReview.Kind.values or decision not in MappingReview.Decision.values:
+        raise ValidationError("Valid mapping review kind and decision are required.")
+    if mapping.status != ObligationControlMapping.Status.UNDER_REVIEW:
+        raise ValidationError("Only mappings under review can receive a decision.")
+    membership = Membership.objects.filter(user=reviewer, tenant=mapping.tenant, is_active=True).first()
+    required_role = Membership.Role.LEGAL_REVIEWER if kind == MappingReview.Kind.LEGAL else Membership.Role.COMPLIANCE_LEAD
+    if membership is None or membership.role != required_role:
+        raise PermissionDenied(f"{required_role} membership is required for this mapping review.")
+    if mapping.created_by_id == reviewer.pk:
+        raise ValidationError("A mapping author cannot approve or reject their own mapping.")
+    if mapping.reviews.filter(reviewer=reviewer).exists():
+        raise ValidationError("The same person cannot perform both mapping reviews.")
+    review = MappingReview.objects.create(mapping=mapping, reviewer=reviewer, kind=kind, decision=decision, note=note)
+    if decision == MappingReview.Decision.REJECTED:
+        mapping.status = ObligationControlMapping.Status.REJECTED
+        mapping.finalized_at = timezone.now()
+        mapping.save(update_fields=["status", "finalized_at"])
+    else:
+        approvals = mapping.reviews.filter(decision=MappingReview.Decision.APPROVED)
+        if approvals.filter(kind=MappingReview.Kind.LEGAL).exists() and approvals.filter(kind=MappingReview.Kind.COMPLIANCE).exists():
+            mapping.status = ObligationControlMapping.Status.APPROVED
+            mapping.finalized_at = timezone.now()
+            mapping.save(update_fields=["status", "finalized_at"])
+    AuditEvent.objects.create(
+        tenant=mapping.tenant, actor=reviewer, action="obligation_mapping.reviewed",
+        object_type="ObligationControlMapping", object_id=str(mapping.id), metadata={"kind": kind, "decision": decision},
+    )
+    return review

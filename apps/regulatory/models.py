@@ -212,3 +212,175 @@ class RegulatoryReview(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=["version", "kind"], name="one_review_per_kind")]
 
+
+class ControlDefinition(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="control_definitions")
+    control_key = models.CharField(max_length=120)
+    version = models.PositiveIntegerField(default=1)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_control_definitions")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["control_key", "-version"]
+        constraints = [models.UniqueConstraint(fields=["tenant", "control_key", "version"], name="unique_tenant_control_version")]
+
+    def __str__(self):
+        return f"{self.control_key} v{self.version}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and self.obligation_mappings.exists():
+            raise ValidationError("Referenced control versions are immutable; create a new version.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
+class TestProcedure(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="test_procedures")
+    control = models.ForeignKey(ControlDefinition, on_delete=models.PROTECT, related_name="test_procedures")
+    procedure_key = models.CharField(max_length=120)
+    version = models.PositiveIntegerField(default=1)
+    title = models.CharField(max_length=255)
+    procedure = models.TextField()
+    expected_result = models.TextField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_test_procedures")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["procedure_key", "-version"]
+        constraints = [models.UniqueConstraint(fields=["tenant", "procedure_key", "version"], name="unique_tenant_test_version")]
+
+    def clean(self):
+        if self.control_id and self.control.tenant_id != self.tenant_id:
+            raise ValidationError({"control": "Control and test procedure must belong to the same tenant."})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and self.obligation_mappings.exists():
+            raise ValidationError("Referenced test procedure versions are immutable; create a new version.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.procedure_key} v{self.version}"
+
+
+class EvidenceRequirement(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="evidence_requirements")
+    test_procedure = models.ForeignKey(TestProcedure, on_delete=models.PROTECT, related_name="evidence_requirements")
+    requirement_key = models.CharField(max_length=120)
+    version = models.PositiveIntegerField(default=1)
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    recurrence = models.CharField(max_length=120, blank=True)
+    retention_days = models.PositiveIntegerField(null=True, blank=True)
+    freshness_days = models.PositiveIntegerField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_evidence_requirements")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["requirement_key", "-version"]
+        constraints = [models.UniqueConstraint(fields=["tenant", "requirement_key", "version"], name="unique_tenant_evidence_requirement_version")]
+
+    def clean(self):
+        if self.test_procedure_id and self.test_procedure.tenant_id != self.tenant_id:
+            raise ValidationError({"test_procedure": "Test procedure and evidence requirement must belong to the same tenant."})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and self.obligation_mappings.exists():
+            raise ValidationError("Referenced evidence requirement versions are immutable; create a new version.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.requirement_key} v{self.version}"
+
+
+class ObligationControlMapping(models.Model):
+    class Status(models.TextChoices):
+        UNDER_REVIEW = "UNDER_REVIEW", "Under review"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="obligation_control_mappings")
+    obligation = models.ForeignKey(Obligation, on_delete=models.PROTECT, related_name="control_mappings")
+    control = models.ForeignKey(ControlDefinition, on_delete=models.PROTECT, related_name="obligation_mappings")
+    test_procedure = models.ForeignKey(TestProcedure, on_delete=models.PROTECT, related_name="obligation_mappings")
+    evidence_requirement = models.ForeignKey(EvidenceRequirement, on_delete=models.PROTECT, related_name="obligation_mappings")
+    rationale = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNDER_REVIEW)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_obligation_mappings")
+    created_at = models.DateTimeField(auto_now_add=True)
+    finalized_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["obligation", "control", "test_procedure", "evidence_requirement"],
+                name="unique_exact_obligation_mapping",
+            )
+        ]
+
+    @property
+    def obligation_tenant_id(self):
+        return self.obligation.subclause.regulation.version.source.tenant_id
+
+    def clean(self):
+        if not all([self.obligation_id, self.control_id, self.test_procedure_id, self.evidence_requirement_id, self.tenant_id]):
+            return
+        if self.obligation.legal_status != LegalSourceStatus.VERIFIED:
+            raise ValidationError({"obligation": "Only a verified legal obligation can receive a submitted mapping."})
+        if self.obligation_tenant_id != self.tenant_id or self.control.tenant_id != self.tenant_id:
+            raise ValidationError("All mapping records must belong to the same tenant.")
+        if self.test_procedure.tenant_id != self.tenant_id or self.test_procedure.control_id != self.control_id:
+            raise ValidationError({"test_procedure": "Test procedure must be the selected control's exact tenant version."})
+        if self.evidence_requirement.tenant_id != self.tenant_id or self.evidence_requirement.test_procedure_id != self.test_procedure_id:
+            raise ValidationError({"evidence_requirement": "Evidence requirement must belong to the selected test procedure."})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self).objects.filter(pk=self.pk).values("status").first()
+            if previous and previous["status"] in {self.Status.APPROVED, self.Status.REJECTED}:
+                raise ValidationError("Finalized mappings are immutable; create a new versioned mapping.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status in {self.Status.APPROVED, self.Status.REJECTED}:
+            raise ValidationError("Finalized mappings cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+
+class MappingReview(models.Model):
+    class Kind(models.TextChoices):
+        LEGAL = "LEGAL", "Legal review"
+        COMPLIANCE = "COMPLIANCE", "Compliance review"
+
+    class Decision(models.TextChoices):
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mapping = models.ForeignKey(ObligationControlMapping, on_delete=models.PROTECT, related_name="reviews")
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="mapping_reviews")
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["mapping", "kind"], name="one_mapping_review_per_kind")]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Mapping reviews are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Mapping reviews are append-only.")
+

@@ -1,6 +1,10 @@
 from django.contrib import admin
 
-from .models import Obligation, Regulation, RegulatoryImportBatch, RegulatoryReview, RegulatorySource, RegulatoryVersion, SubClause, TrustedSigningKey
+from .models import (
+    ControlDefinition, EvidenceRequirement, MappingReview, Obligation, ObligationControlMapping,
+    Regulation, RegulatoryImportBatch, RegulatoryReview, RegulatorySource, RegulatoryVersion,
+    SubClause, TestProcedure, TrustedSigningKey,
+)
 
 
 @admin.register(RegulatorySource)
@@ -31,4 +35,19 @@ class RegulatoryProvenanceAdmin(admin.ModelAdmin):
 
 
 admin.site.register(TrustedSigningKey)
+admin.site.register(ControlDefinition)
+admin.site.register(TestProcedure)
+admin.site.register(EvidenceRequirement)
+
+
+@admin.register(ObligationControlMapping, MappingReview)
+class MappingProvenanceAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 

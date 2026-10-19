@@ -36,6 +36,12 @@ reviewer can import a detached-signature JSON pack. Imported content stays
 `SOURCE_PENDING` until separate legal and compliance reviewers approve it.
 See `docs/regulatory-pack-format.md` for the canonical signing contract.
 
+Approved legal content can be mapped at `/regulatory/mappings/` to exact,
+versioned controls, test procedures, and evidence requirements. Every mapping
+requires independent legal and compliance approval, and its author cannot
+approve it. This is a design/coverage workflow only: it does not mean a control
+is implemented or that evidence has been accepted.
+
 Privileged access requires authenticator-app MFA. After a successful password
 login, a user without a confirmed device is sent to the enrollment QR screen;
 subsequent sessions require a current TOTP code. Five repeated invalid login

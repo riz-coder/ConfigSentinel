@@ -8,9 +8,17 @@ from apps.auditlog.models import AuditEvent
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
-from .models import Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TrustedSigningKey
-from .serializers import RegulationSerializer, RegulatorySourceSerializer, RegulatoryVersionSerializer, TrustedSigningKeySerializer
-from .services import compare_versions, coverage_report, import_pack, review_version
+from .models import (
+    ControlDefinition, EvidenceRequirement, MappingReview, ObligationControlMapping,
+    Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TestProcedure,
+    TrustedSigningKey,
+)
+from .serializers import (
+    ControlDefinitionSerializer, EvidenceRequirementSerializer, ObligationControlMappingSerializer,
+    RegulationSerializer, RegulatorySourceSerializer, RegulatoryVersionSerializer,
+    TestProcedureSerializer, TrustedSigningKeySerializer,
+)
+from .services import compare_versions, coverage_report, create_mapping, import_pack, review_mapping, review_version
 
 
 class TenantScopedViewSetMixin:
@@ -131,4 +139,97 @@ class RegulatoryVersionViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, 
         if base is None:
             raise serializers.ValidationError("A valid same-tenant base version is required.")
         return Response(compare_versions(base, target))
+
+
+class MappingCatalogueViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    audit_object_type = ""
+
+    def perform_create(self, serializer):
+        tenant = self.tenant()
+        if self.request.tenant_membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+            self.permission_denied(self.request, message="Only tenant owners or compliance leads may create mapping catalogue versions.")
+        item = serializer.save(tenant=tenant, created_by=self.request.user)
+        AuditEvent.objects.create(
+            tenant=tenant, actor=self.request.user, action="mapping_catalogue.created",
+            object_type=self.audit_object_type, object_id=str(item.id),
+            metadata={"key": str(item), "version": item.version},
+        )
+
+
+class ControlDefinitionViewSet(MappingCatalogueViewSet):
+    serializer_class = ControlDefinitionSerializer
+    audit_object_type = "ControlDefinition"
+
+    def get_queryset(self):
+        return ControlDefinition.objects.filter(tenant=self.tenant()).select_related("created_by")
+
+
+class TestProcedureViewSet(MappingCatalogueViewSet):
+    serializer_class = TestProcedureSerializer
+    audit_object_type = "TestProcedure"
+
+    def get_queryset(self):
+        return TestProcedure.objects.filter(tenant=self.tenant()).select_related("control", "created_by")
+
+
+class EvidenceRequirementViewSet(MappingCatalogueViewSet):
+    serializer_class = EvidenceRequirementSerializer
+    audit_object_type = "EvidenceRequirement"
+
+    def get_queryset(self):
+        return EvidenceRequirement.objects.filter(tenant=self.tenant()).select_related("test_procedure", "created_by")
+
+
+class ObligationControlMappingViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = ObligationControlMappingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ObligationControlMapping.objects.filter(tenant=self.tenant()).select_related(
+            "obligation", "control", "test_procedure", "evidence_requirement", "created_by",
+        ).prefetch_related("reviews__reviewer")
+
+    def create(self, request):
+        tenant = self.tenant()
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            AuditEvent.objects.create(
+                tenant=tenant, actor=request.user, action="obligation_mapping.denied",
+                object_type="ObligationControlMapping", object_id="not_created", metadata={"reason": "invalid_or_cross_tenant_reference"},
+            )
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            mapping = create_mapping(tenant=tenant, actor=request.user, **serializer.validated_data)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            AuditEvent.objects.create(
+                tenant=tenant, actor=request.user, action="obligation_mapping.denied",
+                object_type="ObligationControlMapping", object_id="not_created", metadata={"reason": "validation_failed"},
+            )
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(mapping).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def review(self, request, pk=None):
+        tenant = self.tenant()
+        mapping = self.get_queryset().filter(pk=pk).first()
+        if mapping is None:
+            AuditEvent.objects.create(
+                tenant=tenant, actor=request.user, action="obligation_mapping.review_denied",
+                object_type="ObligationControlMapping", object_id="unavailable", metadata={"reason": "not_found_or_cross_tenant"},
+            )
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            review_mapping(
+                mapping=mapping, reviewer=request.user, kind=request.data.get("kind"),
+                decision=request.data.get("decision"), note=request.data.get("note", ""),
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        mapping.refresh_from_db()
+        return Response(self.get_serializer(mapping).data)
 
