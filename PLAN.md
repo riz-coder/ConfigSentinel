@@ -64,32 +64,45 @@ boundaries for Windows development and later single-VPS deployment.
 
 ### Implemented
 
-- Django/DRF modular monolith, Windows virtual environment workflow, migrations,
-  tenant memberships and role-aware regulatory APIs.
-- Append-only audit model and read-only administration surface.
-- Regulatory source/version/regulation integrity guards and idempotent command
-  for 84 explicit `SOURCE_PENDING` slots.
-- Authenticated dashboard, health check, OpenAPI endpoint, Docker/Compose/Caddy
-  deployment shape, CI workflow, ADR, threat model, and operator README.
+- TOTP enrollment and verification gate for authenticated tenant/application
+  access, including QR enrollment and tenant/API denial before verification.
+- Five-attempt login throttling with a 30-minute cooldown and redacted platform
+  authentication audit events.
+- Transaction-local tenant context plus forced PostgreSQL RLS on regulatory
+  source/version/regulation data.
+- Default-deny audit reads/updates, database append-only trigger, and existing
+  application-model immutability.
+- Separate schema-owner migration service and non-superuser runtime database
+  role in the Compose topology.
+- Windows/Linux checksum-generating backup and verified/destructive-restore
+  scripts, database security documentation, and PostgreSQL CI validation.
 
 ### Test evidence
 
-- `.venv\\Scripts\\python.exe manage.py test --verbosity 1` — 14 tests passed.
+- `.venv\\Scripts\\python.exe manage.py test --verbosity 1` — 20 tests passed on
+  SQLite, with the 2 PostgreSQL-only boundary tests explicitly skipped locally.
+- GitHub Actions run `39243944720` — SQLite and PostgreSQL 17 jobs passed;
+  PostgreSQL exercised forced-RLS cross-tenant read/write denial and database
+  audit guards under a non-superuser owner role.
 - `.venv\\Scripts\\python.exe manage.py makemigrations --check --dry-run` — no
   changes detected.
 - Production-shaped `manage.py check --deploy` with debug disabled, strong
   secret, allowed host, trusted origin, and HTTPS settings — no issues.
-- Health endpoint smoke test — HTTP 200 with `{"status": "ok"}`.
+- PowerShell backup/restore scripts parsed successfully; Compose and CI YAML
+  parsed successfully; Python dependency check reported no broken requirements.
 
 ### Not implemented / known risks
 
-- Docker execution was not tested because Docker is not installed locally.
-- PostgreSQL RLS/non-owner runtime role, MFA/SSO, Celery/broker, encrypted object
-  storage, backups, and evidence workflows remain future packages.
-- Model-level audit immutability does not protect against a database owner.
+- Full Compose deployment and a real backup/restore drill were not executed
+  because Docker/PostgreSQL client tools are unavailable on this workstation.
+- Database superusers can alter RLS/triggers and must never be application roles.
+- SSO, governed MFA recovery codes, field-level sensitivity grants, encrypted
+  object storage, scheduled off-host backups, Celery, and evidence workflows
+  remain future packages.
 - No authenticated Gazette was supplied; no clause is asserted as verified.
 
 ### Next bounded work package
 
-`WP-CORE-02`: PostgreSQL-enforced tenant isolation, authentication hardening/MFA,
-database roles, audit database guards, and deployment/backup validation.
+`WP-REG-01`: supervised regulatory source import, source hashing, dual-review
+workflow, nested clause hierarchy, version diffs, and coverage gates. Legal text
+remains blocked until an authenticated Gazette is supplied.
