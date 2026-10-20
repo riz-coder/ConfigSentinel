@@ -103,6 +103,21 @@ class ClauseEvidence(models.Model):
             raise ValidationError("Clause evidence must remain in the source tenant.")
 
 
+class ClauseAIAnalysis(models.Model):
+    """Versioned preliminary AI finding; never an auditor or legal decision."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subclause = models.ForeignKey("SubClause", on_delete=models.PROTECT, related_name="ai_analyses")
+    status = models.CharField(max_length=32)
+    result = models.JSONField(default=dict)
+    evidence_hashes = models.JSONField(default=list)
+    model_name = models.CharField(max_length=120)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class RegulatoryVersion(models.Model):
     class ApprovalStatus(models.TextChoices):
         DRAFT = "DRAFT", "Draft"

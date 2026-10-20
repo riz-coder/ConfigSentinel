@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import re
 from io import BytesIO
 
@@ -21,6 +22,7 @@ from apps.tenancy.models import Membership
 from .models import (
     LegalSourceStatus,
     ClauseEvidence,
+    ClauseAIAnalysis,
     MappingReview,
     Obligation,
     ObligationControlMapping,
@@ -34,6 +36,7 @@ from .models import (
     TrustedSigningKey,
 )
 from apps.evidence.vault import LocalEncryptedObjectStore
+from .ai import analyze_clause
 
 
 @transaction.atomic
@@ -165,6 +168,23 @@ def upload_clause_evidence(*, tenant, actor, subclause, title, filename, content
         raise
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="clause_evidence.submitted", object_type="ClauseEvidence", object_id=str(artifact.id), metadata={"size_bytes": artifact.size_bytes})
     return artifact
+
+
+@transaction.atomic
+def analyze_clause_evidence(*, tenant, actor, subclause):
+    if subclause.regulation.version.source.tenant_id != tenant.id:
+        raise PermissionDenied("Clause is not available in this tenant.")
+    evidence = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=subclause))
+    text_items = []
+    for item in evidence:
+        raw = LocalEncryptedObjectStore().retrieve_and_verify(item)
+        if item.original_filename.lower().endswith((".txt", ".csv")):
+            text_items.append(raw.decode("utf-8", errors="replace"))
+        elif item.original_filename.lower().endswith(".pdf"):
+            text_items.append("\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(raw)).pages))
+    result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_texts=text_items)
+    return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
+        evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), created_by=actor)
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 PACK_SCHEMA = {

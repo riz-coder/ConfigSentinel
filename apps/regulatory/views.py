@@ -12,9 +12,9 @@ from apps.auditlog.models import AuditEvent
 from .models import (
     ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
-    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey,
+    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis,
 )
-from .services import coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
+from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
 
 
 @login_required
@@ -78,6 +78,10 @@ def regulatory_center(request):
                         raise ValidationError("Allowed formats: PDF, DOCX, XLSX, CSV, JPG, PNG, or TXT.")
                     upload_clause_evidence(tenant=tenant, actor=request.user, subclause=clause, title=request.POST["title"], filename=upload.name, content=upload.read())
                 messages.success(request, f"{len(uploads)} evidence file(s) encrypted and submitted for independent review.")
+            elif operation == "analyze":
+                clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                analysis = analyze_clause_evidence(tenant=tenant, actor=request.user, subclause=clause)
+                messages.success(request, f"AI preliminary finding recorded: {analysis.status}.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
@@ -109,7 +113,7 @@ def regulatory_center(request):
     )
     for version in versions:
         version.coverage = coverage_report(version)
-        version.clause_cards = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence"))
+        version.clause_cards = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence", "subclauses__ai_analyses"))
     return render(request, "regulatory/center.html", {
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),
