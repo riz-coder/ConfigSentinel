@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import close_old_connections
+from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
 from threading import Thread
 
@@ -15,7 +16,7 @@ from apps.auditlog.models import AuditEvent
 from .models import (
     ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
-    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis,
+    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
 )
 from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
 
@@ -32,6 +33,7 @@ def dashboard(request):
     submitted_clause_count = evidence.values("subclause_id").distinct().count()
     accepted_clause_count = evidence.filter(status=ClauseEvidence.Status.ACCEPTED).values("subclause_id").distinct().count()
     evidence_coverage = round((submitted_clause_count / clause_count) * 100) if clause_count else 0
+    jobs = ClauseAnalysisJob.objects.filter(tenant=tenant)
     return render(
         request,
         "dashboard.html",
@@ -43,6 +45,11 @@ def dashboard(request):
             "rejected_count": evidence.filter(status=ClauseEvidence.Status.REJECTED).count(),
             "legal_unverified_count": regulations.filter(legal_status=LegalSourceStatus.SOURCE_PENDING).count(),
             "evidence_coverage": evidence_coverage,
+            "analysis_running_count": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).count(),
+            "analysis_completed_count": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).count(),
+            "analysis_error_count": jobs.filter(status=ClauseAnalysisJob.Status.ERROR).count(),
+            "running_jobs": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).select_related("subclause__regulation")[:10],
+            "completed_jobs": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).select_related("subclause__regulation")[:10],
             "sources": sources[:10],
         },
     )
@@ -83,17 +90,22 @@ def regulatory_center(request):
                 messages.success(request, f"{len(uploads)} evidence file(s) encrypted and submitted for independent review.")
             elif operation == "analyze":
                 clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                job = ClauseAnalysisJob.objects.create(tenant=tenant, subclause=clause, requested_by=request.user)
                 tenant_id, clause_id, actor_id = str(tenant.id), str(clause.id), request.user.id
                 def run_analysis():
                     close_old_connections()
                     try:
+                        queued_job = ClauseAnalysisJob.objects.get(pk=job.pk)
+                        queued_job.status = ClauseAnalysisJob.Status.RUNNING
+                        queued_job.save(update_fields=["status"])
                         queued_tenant = tenant.__class__.objects.get(pk=tenant_id)
                         queued_clause = SubClause.objects.get(pk=clause_id)
                         actor = get_user_model().objects.get(pk=actor_id)
                         analyze_clause_evidence(tenant=queued_tenant, actor=actor, subclause=queued_clause)
                     except Exception:
-                        # A failed external analysis never alters an existing finding.
-                        pass
+                        ClauseAnalysisJob.objects.filter(pk=job.pk).update(status=ClauseAnalysisJob.Status.ERROR, completed_at=timezone.now())
+                    else:
+                        ClauseAnalysisJob.objects.filter(pk=job.pk).update(status=ClauseAnalysisJob.Status.COMPLETED, completed_at=timezone.now())
                     finally:
                         close_old_connections()
                 Thread(target=run_analysis, daemon=True).start()

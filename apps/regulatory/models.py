@@ -118,6 +118,25 @@ class ClauseAIAnalysis(models.Model):
         ordering = ["-created_at"]
 
 
+class ClauseAnalysisJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        COMPLETED = "COMPLETED", "Completed"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT)
+    subclause = models.ForeignKey("SubClause", on_delete=models.PROTECT, related_name="analysis_jobs")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class RegulatoryVersion(models.Model):
     class ApprovalStatus(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
