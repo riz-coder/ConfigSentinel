@@ -1,9 +1,14 @@
 import base64
 import hashlib
 import json
+import re
+from io import BytesIO
+
+from pypdf import PdfReader
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.utils import timezone
@@ -15,6 +20,7 @@ from apps.tenancy.models import Membership
 
 from .models import (
     LegalSourceStatus,
+    ClauseEvidence,
     MappingReview,
     Obligation,
     ObligationControlMapping,
@@ -55,6 +61,110 @@ def upload_source_pdf(*, tenant, actor, title, version_label, filename, content)
         raise
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="regulatory_source.pdf_uploaded", object_type="SourceDocument", object_id=str(document.id), metadata={"sha256": document.plaintext_sha256, "size_bytes": document.size_bytes})
     return source, version
+
+
+def _source_regulations(pdf_bytes):
+    """Return exact, display-only regulation chunks from a supplied PDF.
+
+    Extraction is intentionally conservative: it finds only numbered headings
+    which carry a first subparagraph ``(1)``.  It does not create obligations,
+    infer evidence, or change any legal status.
+    """
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+        if reader.is_encrypted:
+            raise ValidationError("The PDF is encrypted and cannot be reviewed in this workspace.")
+        pages = [page.extract_text() or "" for page in reader.pages]
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise ValidationError("The PDF text could not be extracted. Upload a text-readable source PDF.") from exc
+
+    text = "\n\n".join(f"[Source page {index}]\n{page}" for index, page in enumerate(pages, start=1))
+    heading = re.compile(
+        r"^(?P<number>\d{1,3})\.\s+(?P<title>.+?)\.\s*(?:[^\n]*\(\s*1\s*\)|[^\n]*\n\s*\(\s*1\s*\))",
+        re.MULTILINE,
+    )
+    matches = list(heading.finditer(text))
+    extracted = []
+    for index, match in enumerate(matches):
+        number = int(match.group("number"))
+        # Definitions also include numbered explanatory lists; only regulation
+        # headings begin a source page or follow a normal text paragraph.
+        title = " ".join(match.group("title").split())
+        if not title or number > 250:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        chunk = text[match.start():end].strip()
+        page = next((str(page_number) for page_number in range(len(pages), 0, -1)
+                     if f"[Source page {page_number}]" in text[:match.start()]), "")
+        extracted.append({"number": number, "title": title, "page": page, "excerpt": chunk})
+    # Do not silently accept malformed duplicate coordinates.
+    numbers = [item["number"] for item in extracted]
+    if not extracted or len(numbers) != len(set(numbers)):
+        raise ValidationError("No unambiguous numbered regulation headings were found in this PDF.")
+    return extracted
+
+
+@transaction.atomic
+def extract_source_regulations(*, version, actor):
+    """Create pending-review clause cards from an encrypted tenant source."""
+    version = RegulatoryVersion.objects.select_for_update().select_related("source", "source__document").get(pk=version.pk)
+    membership = Membership.objects.filter(user=actor, tenant=version.source.tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
+        raise PermissionDenied("Tenant owner or legal reviewer authorization is required.")
+    if Regulation.objects.filter(version=version).exists():
+        raise ValidationError("This version already has clause cards; extraction never overwrites an existing register.")
+    try:
+        document = version.source.document
+    except SourceDocument.DoesNotExist as exc:
+        raise ValidationError("This source has no encrypted PDF to extract.") from exc
+    extracted = _source_regulations(LocalEncryptedObjectStore().retrieve_and_verify(document))
+    for item in extracted:
+        regulation = Regulation.objects.create(
+            version=version, number=item["number"], title=item["title"],
+            source_page=item["page"], source_excerpt=item["excerpt"],
+            legal_status=LegalSourceStatus.SOURCE_PENDING,
+        )
+        SubClause.objects.create(
+            regulation=regulation, clause_path=str(item["number"]), title=item["title"],
+            source_page=item["page"], legal_status=LegalSourceStatus.SOURCE_PENDING,
+        )
+    AuditEvent.objects.create(
+        tenant=version.source.tenant, actor=actor, action="regulatory_source.headings_extracted",
+        object_type="RegulatoryVersion", object_id=str(version.id),
+        metadata={"count": len(extracted), "first": extracted[0]["number"], "last": extracted[-1]["number"]},
+    )
+    return extracted
+
+
+@transaction.atomic
+def upload_clause_evidence(*, tenant, actor, subclause, title, filename, content):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+        raise PermissionDenied("Only tenant owners or compliance leads may submit clause evidence.")
+    if subclause.regulation.version.source.tenant_id != tenant.id:
+        raise PermissionDenied("Clause is not available in this tenant.")
+    if not content or len(content) > settings.EVIDENCE_MAX_UPLOAD_BYTES:
+        raise ValidationError("Evidence file is empty or exceeds the configured upload limit.")
+    safe_name = get_valid_filename(filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1])[:255]
+    if not safe_name:
+        raise ValidationError("Evidence filename is invalid.")
+    artifact = ClauseEvidence(tenant=tenant, subclause=subclause, title=title, original_filename=safe_name,
+        size_bytes=len(content), plaintext_sha256="0" * 64, ciphertext_sha256="0" * 64,
+        storage_key="pending", wrapped_dek="pending", wrap_nonce="pending", content_nonce="pending", uploaded_by=actor)
+    artifact.clean()
+    encrypted = LocalEncryptedObjectStore().encrypt_and_store(tenant_id=tenant.id, artifact_id=artifact.id, plaintext=content)
+    try:
+        artifact.storage_key, artifact.wrapped_dek = encrypted.storage_key, encrypted.wrapped_dek
+        artifact.wrap_nonce, artifact.content_nonce = encrypted.wrap_nonce, encrypted.content_nonce
+        artifact.plaintext_sha256, artifact.ciphertext_sha256, artifact.size_bytes = encrypted.plaintext_sha256, encrypted.ciphertext_sha256, encrypted.size_bytes
+        artifact.save()
+    except Exception:
+        LocalEncryptedObjectStore().purge(encrypted.storage_key)
+        raise
+    AuditEvent.objects.create(tenant=tenant, actor=actor, action="clause_evidence.submitted", object_type="ClauseEvidence", object_id=str(artifact.id), metadata={"size_bytes": artifact.size_bytes})
+    return artifact
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 PACK_SCHEMA = {

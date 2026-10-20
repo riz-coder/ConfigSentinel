@@ -14,7 +14,7 @@ from .models import (
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey,
 )
-from .services import coverage_report, create_mapping, import_pack, review_mapping, review_version, upload_source_pdf
+from .services import coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
 
 
 @login_required
@@ -49,7 +49,19 @@ def regulatory_center(request):
                     version_label=request.POST["version_label"], filename=request.FILES["pdf"].name,
                     content=request.FILES["pdf"].read(),
                 )
-                messages.success(request, f"Official source PDF saved as {source.title}. Add and review exact clause coordinates next.")
+                try:
+                    cards = extract_source_regulations(version=version, actor=request.user)
+                    messages.success(request, f"Encrypted PDF saved. {len(cards)} source clause cards were extracted for human review.")
+                except ValidationError as extraction_error:
+                    messages.warning(request, f"PDF saved, but headings could not be extracted: {'; '.join(extraction_error.messages)}")
+            elif operation == "extract":
+                version = get_object_or_404(RegulatoryVersion, pk=request.POST.get("version"), source__tenant=tenant)
+                cards = extract_source_regulations(version=version, actor=request.user)
+                messages.success(request, f"{len(cards)} source clause cards were extracted for human review.")
+            elif operation == "submit_evidence":
+                clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                upload_clause_evidence(tenant=tenant, actor=request.user, subclause=clause, title=request.POST["title"], filename=request.FILES["evidence"].name, content=request.FILES["evidence"].read())
+                messages.success(request, "Evidence encrypted and submitted for independent review.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
@@ -81,6 +93,7 @@ def regulatory_center(request):
     )
     for version in versions:
         version.coverage = coverage_report(version)
+        version.regulations = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence"))
     return render(request, "regulatory/center.html", {
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),

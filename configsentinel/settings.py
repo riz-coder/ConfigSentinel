@@ -138,7 +138,9 @@ if EVIDENCE_MAX_UPLOAD_BYTES <= 0:
     raise ImproperlyConfigured("CONFIGSENTINEL_EVIDENCE_MAX_UPLOAD_BYTES must be positive")
 FILE_UPLOAD_HANDLERS = ["django.core.files.uploadhandler.MemoryFileUploadHandler"]
 FILE_UPLOAD_MAX_MEMORY_SIZE = EVIDENCE_MAX_UPLOAD_BYTES + (1024 * 1024)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
+# Multipart form overhead must not make an otherwise permitted evidence PDF
+# fail before the bounded in-memory upload handler receives it.
+DATA_UPLOAD_MAX_MEMORY_SIZE = EVIDENCE_MAX_UPLOAD_BYTES + (1024 * 1024)
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},

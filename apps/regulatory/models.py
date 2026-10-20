@@ -135,13 +135,16 @@ class Regulation(models.Model):
     title = models.CharField(max_length=255, default="SOURCE_PENDING — no verified clause text")
     legal_status = models.CharField(max_length=20, choices=LegalSourceStatus.choices, default=LegalSourceStatus.SOURCE_PENDING)
     source_page = models.CharField(max_length=40, blank=True)
+    # This is an unedited extraction from the tenant-provided document.  It is
+    # deliberately not a legal interpretation or an evidence checklist.
+    source_excerpt = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["number"]
         constraints = [
             models.UniqueConstraint(fields=["version", "number"], name="unique_version_regulation_number"),
-            models.CheckConstraint(condition=models.Q(number__gte=1, number__lte=84), name="regulation_number_1_to_84"),
+            models.CheckConstraint(condition=models.Q(number__gte=1, number__lte=250), name="regulation_number_1_to_250"),
         ]
 
     def clean(self):
