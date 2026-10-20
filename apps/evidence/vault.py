@@ -92,7 +92,7 @@ class LocalEncryptedObjectStore:
         )
 
     def retrieve_and_verify(self, artifact) -> bytes:
-        if artifact.purged_at:
+        if getattr(artifact, "purged_at", None):
             raise EvidenceIntegrityError("Evidence ciphertext has been governed-purged.")
         path = self._path(artifact.storage_key)
         try:
@@ -101,7 +101,8 @@ class LocalEncryptedObjectStore:
             raise EvidenceIntegrityError("Evidence ciphertext is missing.") from exc
         if hashlib.sha256(ciphertext).hexdigest() != artifact.ciphertext_sha256:
             raise EvidenceIntegrityError("Evidence ciphertext hash verification failed.")
-        aad = artifact_aad(artifact.tenant_id, artifact.id)
+        tenant_id = getattr(artifact, "tenant_id", None) or artifact.source.tenant_id
+        aad = artifact_aad(tenant_id, artifact.id)
         try:
             wrap_nonce = base64.b64decode(artifact.wrap_nonce, validate=True)
             content_nonce = base64.b64decode(artifact.content_nonce, validate=True)

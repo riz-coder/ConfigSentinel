@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.utils import timezone
+from django.utils.text import get_valid_filename
 from jsonschema import Draft202012Validator, FormatChecker
 
 from apps.auditlog.models import AuditEvent
@@ -22,9 +23,38 @@ from .models import (
     RegulatoryReview,
     RegulatorySource,
     RegulatoryVersion,
+    SourceDocument,
     SubClause,
     TrustedSigningKey,
 )
+from apps.evidence.vault import LocalEncryptedObjectStore
+
+
+@transaction.atomic
+def upload_source_pdf(*, tenant, actor, title, version_label, filename, content):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
+        raise PermissionDenied("Tenant owner or legal reviewer authorization is required.")
+    if not filename.lower().endswith(".pdf") or not content.startswith(b"%PDF"):
+        raise ValidationError("Only a valid PDF source document may be uploaded.")
+    source = RegulatorySource.objects.create(tenant=tenant, title=title, sha256=hashlib.sha256(content).hexdigest())
+    version = RegulatoryVersion.objects.create(source=source, version_label=version_label, approval_status=RegulatoryVersion.ApprovalStatus.UNDER_REVIEW)
+    document = SourceDocument(source=source, original_filename=get_valid_filename(filename)[:255], size_bytes=len(content), plaintext_sha256="0" * 64, ciphertext_sha256="0" * 64, storage_key="pending", wrapped_dek="pending", wrap_nonce="pending", content_nonce="pending", uploaded_by=actor)
+    encrypted = LocalEncryptedObjectStore().encrypt_and_store(tenant_id=tenant.id, artifact_id=document.id, plaintext=content)
+    document.storage_key = encrypted.storage_key
+    document.wrapped_dek = encrypted.wrapped_dek
+    document.wrap_nonce = encrypted.wrap_nonce
+    document.content_nonce = encrypted.content_nonce
+    document.plaintext_sha256 = encrypted.plaintext_sha256
+    document.ciphertext_sha256 = encrypted.ciphertext_sha256
+    document.size_bytes = encrypted.size_bytes
+    try:
+        document.save()
+    except Exception:
+        LocalEncryptedObjectStore().purge(encrypted.storage_key)
+        raise
+    AuditEvent.objects.create(tenant=tenant, actor=actor, action="regulatory_source.pdf_uploaded", object_type="SourceDocument", object_id=str(document.id), metadata={"sha256": document.plaintext_sha256, "size_bytes": document.size_bytes})
+    return source, version
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 PACK_SCHEMA = {

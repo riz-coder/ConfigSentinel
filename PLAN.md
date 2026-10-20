@@ -2,43 +2,39 @@
 
 ## Current work package
 
-`WP-COLLECT-01` — authorized read-only collector trust-boundary foundation.
+`WP-REG-02` — source PDF intake, reviewed clause register, clause-evidence
+workflow and operational dashboard.
 
 ## In scope
 
-- Add tenant-scoped devices, external secret references, collector agents,
-  written scope grants, pinned SSH host-key fingerprints, and collection jobs.
-- Model an explicit command-profile approval boundary without shipping or
-  executing any vendor command until separate operator/network review.
-- Enforce active authorization windows, device/agent state, per-device locks,
-  host-key pinning, command/time/output budgets, and fail-safe job states.
-- Add role-aware API/UI, PostgreSQL forced RLS and immutable authorization/job
-  history, audit events, negative tests, OpenAPI coverage, and operator docs.
+- Add an encrypted official-source PDF intake path, a human-reviewed clause
+  register, and source/document hash provenance.
+- Add simple ISP clause-evidence submission against exact reviewed clause IDs,
+  independent acceptance/rejection, and honest clause readiness states.
+- Replace the normal-user manifest/signature screen with guided PDF-to-clause
+  workflow; retain signed manifest import as an advanced administrator route.
+- Add a dashboard with status counts and charts; no legal certification or
+  document AI inference.
 
 ## Explicitly out of scope
 
-- Network connections, discovery/scanning, SSH/API execution, vendor commands,
-  parsers, normalized facts, rules, findings, or live credentials.
-- Production agent binaries, mTLS issuance, queues/workers, VPN deployment,
-  signed job transport, raw-output storage, and automatic scheduling.
-- Any configuration write, remediation command, reset/reload, exploit, or
-  destructive probe.
+- OCR/LLM-based legal extraction, automatic legal interpretation, and an
+  automatic `COMPLIANT` or legal certification outcome.
+- Device collection, parser/rule packs, automatic remediation, notices, report
+  exports, production KMS/S3 credentials, or production retention defaults.
 
 ## Acceptance tests
 
-1. A job cannot be created without an active approved scope grant, exact device,
-   pinned host key, active agent and approved command profile.
-2. Credentials are opaque secret-manager references only and are never returned
-   by API/UI, audit metadata, logs, fixtures, or job payload previews.
-3. Device locks prevent concurrent active jobs; time, command and output budgets
-   are mandatory positive bounded values and cannot be expanded by an agent.
-4. Host-key mismatch, expired/revoked scope, unsupported profile, missing result,
-   timeout or agent failure produces `UNKNOWN`/`ERROR`, never `PASS`.
-5. Authorization/profile approvals are attributable and immutable; cross-tenant
-   reads and foreign-object submissions are denied and audited.
-6. No code path opens a socket or runs a subprocess/vendor command in this WP.
-7. API/OpenAPI, UI, migrations, SQLite/PostgreSQL tests, docs and deployment
-   checks pass.
+1. Official source upload stores ciphertext only and records a hash, uploader,
+   source metadata, and `SOURCE_PENDING` status until review.
+2. Each clause is an exact user-entered source coordinate with page and review
+   state; the app never invents or silently extracts legal text from a PDF.
+3. ISP evidence attaches to an exact clause and stays `UNDER_REVIEW` until an
+   independent reviewer accepts/rejects it; foreign-tenant IDs fail closed.
+4. Dashboard displays only `READY`, `GAP`, `INSUFFICIENT_EVIDENCE`,
+   `LEGAL_UNVERIFIED`, and `N_A`; it never calls an ISP legally compliant.
+5. API/OpenAPI, UI, migration, RLS, encryption/tamper, permission and negative
+   tests pass.
 
 ## Dependencies
 

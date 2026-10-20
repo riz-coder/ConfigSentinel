@@ -1,36 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Framework sources · {{ product_name }}{% endblock %}
 {% block content %}
-<p><a href="{% url 'dashboard' %}">← Dashboard</a></p>
-<h1>Framework source center</h1>
-<p><a href="{% url 'mapping-center' %}">Open control/test/evidence mappings →</a></p>
-<div class="warning"><strong>Source integrity gate:</strong> an imported pack remains SOURCE_PENDING until two distinct authorized people complete legal and assurance approval. Coverage gaps never count as passes.</div>
+<p><a href="{% url 'dashboard' %}">← Dashboard</a></p><h1>Framework source center</h1><p>Upload each official PDF once, then register the exact clause coordinates you want ISP evidence against.</p>
+<div class="warning"><strong>Legal integrity gate:</strong> a PDF upload proves storage and hash provenance only. Clause text and legal status remain SOURCE_PENDING until authorized review.</div>
 {% for message in messages %}<div class="card" style="margin-bottom:1rem">{{ message }}</div>{% endfor %}
-{% if can_import %}
-<div class="card">
-  <h2>Import signed pack</h2>
-  <form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="operation" value="import">
-    <p><label>Trusted key<select name="signing_key" required style="width:100%;padding:.7rem">{% for key in signing_keys %}<option value="{{ key.id }}">{{ key.name }} · {{ key.fingerprint|slice:":12" }}…</option>{% endfor %}</select></label></p>
-    <p><label>Manifest JSON<input type="file" name="manifest" accept="application/json,.json" required></label></p>
-    <p><label>Detached Ed25519 signature<input type="file" name="signature" required></label></p>
-    <button type="submit" {% if not signing_keys %}disabled{% endif %}>Verify and import</button>
-    {% if not signing_keys %}<p>A tenant owner must register a trusted public signing key first.</p>{% endif %}
-  </form>
-</div>
-{% endif %}
-<h2>Versions</h2>
-{% for version in versions %}
-<div class="card" style="margin-bottom:1rem">
-  <h3>{{ version.source.title }} · {{ version.version_label }}</h3>
-  <p>Status: <strong>{{ version.approval_status }}</strong> / {{ version.source.legal_status }} · Regulations: {{ version.coverage.regulations }} · Obligations: {{ version.coverage.obligations }}</p>
-  <p>Coverage ready: <strong>{{ version.coverage.ready|yesno:"YES,NO" }}</strong>{% if version.coverage.issues %} · {{ version.coverage.issues|join:", " }}{% endif %}</p>
-  <p>Reviews: {% for review in version.reviews.all %}{{ review.kind }}={{ review.decision }} by {{ review.reviewer.username }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}</p>
-  {% if review_kind and version.approval_status == "UNDER_REVIEW" %}
-  <form method="post">{% csrf_token %}<input type="hidden" name="operation" value="review"><input type="hidden" name="version" value="{{ version.id }}"><input type="hidden" name="kind" value="{{ review_kind }}">
-    <label>Review note<input name="note" maxlength="2000"></label>
-    <button name="decision" value="APPROVED">Approve {{ review_kind|lower }}</button> <button name="decision" value="REJECTED">Reject</button>
-  </form>
-  {% endif %}
-</div>
-{% empty %}<div class="card">No signed regulatory pack has been imported.</div>{% endfor %}
+{% if can_import %}<form method="post" enctype="multipart/form-data" class="card"><input type="hidden" name="operation" value="upload_pdf"><h2>1. Upload official source PDF</h2><input name="title" placeholder="Document title, e.g. Critical Telecom Data Regulations 2025" required><input name="version_label" placeholder="Version, e.g. 2025-10-29" required><input type="file" name="pdf" accept="application/pdf,.pdf" required><button>Encrypt and save source PDF</button></form>{% endif %}
+{% if can_register_clauses and versions %}<form method="post" class="card" style="margin-top:1rem"><input type="hidden" name="operation" value="clause"><h2>2. Register a clause for review</h2><select name="version" required>{% for version in versions %}<option value="{{ version.id }}">{{ version.source.title }} · {{ version.version_label }}</option>{% endfor %}</select><input name="regulation_number" type="number" min="1" max="84" placeholder="Regulation number, e.g. 1" required><input name="clause_path" placeholder="Clause path, e.g. 1.1" required><input name="title" placeholder="Exact clause heading (copy only after human review)" required><input name="source_page" placeholder="PDF page number" required><button>Save clause as pending review</button></form>{% endif %}
+<h2 style="margin-top:1.5rem">Source versions</h2>{% for version in versions %}<div class="card" style="margin-bottom:1rem"><h3>{{ version.source.title }} · {{ version.version_label }}</h3><p>Status: <strong>{{ version.approval_status }}</strong> / {{ version.source.legal_status }} · Regulations: {{ version.coverage.regulations }} · Clauses/evidence workflow remains review-gated.</p>{% if version.source.document %}<p>Encrypted PDF: {{ version.source.document.original_filename }} · SHA-256 <code>{{ version.source.document.plaintext_sha256 }}</code></p>{% endif %}<p>Coverage ready: <strong>{{ version.coverage.ready|yesno:"YES,NO" }}</strong>{% if version.coverage.issues %} · {{ version.coverage.issues|join:", " }}{% endif %}</p></div>{% empty %}<div class="card">Upload the first official source PDF to begin.</div>{% endfor %}
+<details class="card"><summary><strong>Advanced signed manifest import</strong></summary><p>This is for a reviewed technical pack, not normal PDF upload.</p>{% if can_import %}<form method="post" enctype="multipart/form-data"><input type="hidden" name="operation" value="import"><select name="signing_key" required>{% for key in signing_keys %}<option value="{{ key.id }}">{{ key.name }}</option>{% endfor %}</select><input type="file" name="manifest" accept="application/json,.json" required><input type="file" name="signature" required><button {% if not signing_keys %}disabled{% endif %}>Verify and import</button></form>{% endif %}</details>
 {% endblock %}

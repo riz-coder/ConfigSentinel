@@ -12,9 +12,9 @@ from apps.auditlog.models import AuditEvent
 from .models import (
     ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
-    RegulatoryVersion, TestProcedure, TrustedSigningKey,
+    RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey,
 )
-from .services import coverage_report, create_mapping, import_pack, review_mapping, review_version
+from .services import coverage_report, create_mapping, import_pack, review_mapping, review_version, upload_source_pdf
 
 
 @login_required
@@ -43,7 +43,22 @@ def regulatory_center(request):
     if request.method == "POST":
         try:
             operation = request.POST.get("operation")
-            if operation == "import":
+            if operation == "upload_pdf":
+                source, version = upload_source_pdf(
+                    tenant=tenant, actor=request.user, title=request.POST["title"],
+                    version_label=request.POST["version_label"], filename=request.FILES["pdf"].name,
+                    content=request.FILES["pdf"].read(),
+                )
+                messages.success(request, f"Official source PDF saved as {source.title}. Add and review exact clause coordinates next.")
+            elif operation == "clause":
+                if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
+                    raise PermissionDenied("Your role cannot register source clauses.")
+                version = get_object_or_404(RegulatoryVersion, pk=request.POST["version"], source__tenant=tenant)
+                number = int(request.POST["regulation_number"])
+                regulation, _ = Regulation.objects.get_or_create(version=version, number=number, defaults={"source_page": request.POST["source_page"]})
+                SubClause.objects.get_or_create(regulation=regulation, clause_path=request.POST["clause_path"], defaults={"title": request.POST["title"], "source_page": request.POST["source_page"]})
+                messages.success(request, "Clause saved as SOURCE_PENDING; it still requires legal review.")
+            elif operation == "import":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot import regulatory packs.")
                 key = get_object_or_404(TrustedSigningKey, pk=request.POST.get("signing_key"), tenant=tenant, is_active=True)
@@ -70,6 +85,7 @@ def regulatory_center(request):
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),
         "can_import": membership.role in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER},
+        "can_register_clauses": membership.role in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER},
         "review_kind": RegulatoryReview.Kind.LEGAL if membership.role == Membership.Role.LEGAL_REVIEWER else RegulatoryReview.Kind.COMPLIANCE if membership.role == Membership.Role.COMPLIANCE_LEAD else "",
     })
 

@@ -54,6 +54,55 @@ class RegulatorySource(models.Model):
         return self.title
 
 
+class SourceDocument(models.Model):
+    """Encrypted official-source PDF; it is not parsed into legal text automatically."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source = models.OneToOneField(RegulatorySource, on_delete=models.PROTECT, related_name="document")
+    original_filename = models.CharField(max_length=255)
+    size_bytes = models.PositiveBigIntegerField()
+    plaintext_sha256 = models.CharField(max_length=64)
+    ciphertext_sha256 = models.CharField(max_length=64)
+    storage_key = models.CharField(max_length=255, unique=True)
+    wrapped_dek = models.TextField()
+    wrap_nonce = models.CharField(max_length=24)
+    content_nonce = models.CharField(max_length=24)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class ClauseEvidence(models.Model):
+    class Status(models.TextChoices):
+        UNDER_REVIEW = "UNDER_REVIEW", "Under review"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        REJECTED = "REJECTED", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="clause_evidence")
+    subclause = models.ForeignKey("SubClause", on_delete=models.PROTECT, related_name="submitted_evidence")
+    title = models.CharField(max_length=255)
+    original_filename = models.CharField(max_length=255)
+    size_bytes = models.PositiveBigIntegerField()
+    plaintext_sha256 = models.CharField(max_length=64)
+    ciphertext_sha256 = models.CharField(max_length=64)
+    storage_key = models.CharField(max_length=255, unique=True)
+    wrapped_dek = models.TextField()
+    wrap_nonce = models.CharField(max_length=24)
+    content_nonce = models.CharField(max_length=24)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNDER_REVIEW)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="uploaded_clause_evidence")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_clause_evidence")
+    review_note = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def clean(self):
+        if self.subclause_id and self.subclause.regulation.version.source.tenant_id != self.tenant_id:
+            raise ValidationError("Clause evidence must remain in the source tenant.")
+
+
 class RegulatoryVersion(models.Model):
     class ApprovalStatus(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
