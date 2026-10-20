@@ -82,8 +82,9 @@
   8 collector-boundary tests passed on SQLite.
 - `.venv\\Scripts\\python.exe manage.py test --verbosity 1` — all 61 tests
   passed; 5 PostgreSQL-only security tests were explicitly skipped locally.
-- Migration drift and Django system checks passed. Production and CI checks are
-  recorded before package completion.
+- Migration drift, Django system/deployment checks, dependency and YAML checks
+  passed. GitHub Actions run `39375549090` passed, including PostgreSQL RLS and
+  immutable authorization-boundary tests.
 
 ### Not implemented / known risks
 
