@@ -1,20 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ tenant.name }}</h1>
-<p><a href="{% url 'regulatory-center' %}">Open framework source center →</a></p>
-<p><a href="{% url 'evidence-center' %}">Open encrypted evidence vault →</a></p>
-<p><a href="{% url 'collector-center' %}">Open read-only collector setup →</a></p>
-<div class="warning"><strong>Legal integrity gate:</strong> SOURCE_PENDING is not compliant, mapped, or implemented. No verified legal conclusion is available without an authenticated source and authorized review.</div>
-<div class="grid">
-  <div class="card"><div>Framework sources</div><div class="value">{{ source_count }}</div></div>
-  <div class="card"><div>Verified sources</div><div class="value">{{ verified_source_count }}</div></div>
-  <div class="card"><div>Requirement slots</div><div class="value">{{ regulation_count }}</div></div>
-  <div class="card"><div>Source pending</div><div class="value">{{ source_pending_count }}</div></div>
-</div>
-<div class="card" style="margin-top:1rem"><h2>Sources</h2>
-  <table><thead><tr><th>Title</th><th>Source reference</th><th>Source status</th></tr></thead><tbody>
-  {% for source in sources %}<tr><td>{{ source.title }}</td><td>{{ source.gazette_identifier|default:"—" }}</td><td>{{ source.legal_status }}</td></tr>{% empty %}<tr><td colspan="3">No regulatory source has been registered.</td></tr>{% endfor %}
-  </tbody></table>
-</div>
+<h1>{{ tenant.name }}</h1><p>ISP evidence progress across the uploaded framework.</p>
+<div class="warning"><strong>Legal result:</strong> unavailable until the source and clause mappings are independently reviewed. The percentage below is evidence coverage only — it is not a compliance score.</div>
+<div class="grid" style="margin-top:1rem"><div class="card"><div>Clause cards</div><div class="value">{{ clause_count }}</div></div><div class="card"><div>Clauses with ISP evidence</div><div class="value">{{ submitted_clause_count }}</div></div><div class="card"><div>Accepted evidence</div><div class="value">{{ accepted_clause_count }}</div></div><div class="card"><div>Evidence under review</div><div class="value">{{ under_review_count }}</div></div></div>
+<div class="card" style="margin-top:1rem"><h2>Evidence coverage</h2><div class="value">{{ evidence_coverage }}%</div><div style="height:12px;background:#e6eaf3;border-radius:9px;overflow:hidden;margin:.8rem 0"><div style="height:100%;width:{{ evidence_coverage }}%;background:#3157d5"></div></div><p>{{ submitted_clause_count }} of {{ clause_count }} clause cards have at least one ISP submission. Rejected files: {{ rejected_count }}.</p></div>
+<div class="grid" style="margin-top:1rem"><div class="card"><h3>Legal verification</h3><div class="value">{{ legal_unverified_count }}</div><p>Clause cards awaiting legal/source review.</p></div><div class="card"><h3>Next action</h3><p><a href="{% url 'regulatory-center' %}">Open framework cards →</a></p><p>Attach ISP evidence to each relevant clause; an independent reviewer must then accept or reject it.</p></div></div>
 {% endblock %}
-

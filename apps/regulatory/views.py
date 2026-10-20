@@ -11,7 +11,7 @@ from apps.auditlog.models import AuditEvent
 
 from .models import (
     ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
-    ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
+    ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey,
 )
 from .services import coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
@@ -20,17 +20,26 @@ from .services import coverage_report, create_mapping, extract_source_regulation
 @login_required
 def dashboard(request):
     tenant = tenant_for_request(request)
-    sources = RegulatorySource.objects.filter(tenant=tenant)
-    regulations = Regulation.objects.filter(version__source__tenant=tenant)
+    # A legacy seed source is intentionally excluded: it has no uploaded PDF
+    # and must not distort a customer's operational dashboard.
+    sources = RegulatorySource.objects.filter(tenant=tenant).exclude(title__startswith="Framework source")
+    regulations = Regulation.objects.filter(version__source__in=sources)
+    evidence = ClauseEvidence.objects.filter(tenant=tenant, subclause__regulation__version__source__in=sources)
+    clause_count = regulations.count()
+    submitted_clause_count = evidence.values("subclause_id").distinct().count()
+    accepted_clause_count = evidence.filter(status=ClauseEvidence.Status.ACCEPTED).values("subclause_id").distinct().count()
+    evidence_coverage = round((submitted_clause_count / clause_count) * 100) if clause_count else 0
     return render(
         request,
         "dashboard.html",
         {
             "tenant": tenant,
-            "source_count": sources.count(),
-            "verified_source_count": sources.filter(legal_status=LegalSourceStatus.VERIFIED).count(),
-            "regulation_count": regulations.count(),
-            "source_pending_count": regulations.filter(legal_status=LegalSourceStatus.SOURCE_PENDING).count(),
+            "source_count": sources.count(), "clause_count": clause_count,
+            "submitted_clause_count": submitted_clause_count, "accepted_clause_count": accepted_clause_count,
+            "under_review_count": evidence.filter(status=ClauseEvidence.Status.UNDER_REVIEW).count(),
+            "rejected_count": evidence.filter(status=ClauseEvidence.Status.REJECTED).count(),
+            "legal_unverified_count": regulations.filter(legal_status=LegalSourceStatus.SOURCE_PENDING).count(),
+            "evidence_coverage": evidence_coverage,
             "sources": sources[:10],
         },
     )
