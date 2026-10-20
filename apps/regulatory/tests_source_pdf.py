@@ -83,6 +83,17 @@ class SourcePdfIntakeTests(TestCase):
         self.assertNotEqual(result["status"], "COMPLIANT")
         self.assertTrue(any("action-linked" in gap for gap in result["gaps"]))
 
+    def test_capitalized_deadline_prose_is_not_misread_as_a_named_role(self):
+        result = deterministic_assessment(
+            "The licensee shall report to the Authority within twenty-four (24) hours.",
+            ["The incident reporting procedure requires notification to the authority within 24 hours and records a timestamp."],
+        )
+
+        requirements = [item["requirement"] for item in result["requirement_checks"]]
+        self.assertNotIn("Authority within twenty-four", requirements)
+        self.assertIn("Deadline 24", requirements)
+        self.assertTrue(result["document_observations"][0]["extracted_characters"] > 40)
+
     def test_image_only_document_remains_insufficient(self):
         result = deterministic_assessment(
             "Annual security awareness training shall be conducted.",

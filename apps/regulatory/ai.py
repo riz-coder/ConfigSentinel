@@ -27,7 +27,9 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
     readable = [doc for doc in documents if len(doc.get("text", "").strip()) >= 40]
     evidence = " ".join(doc.get("text", "") for doc in readable)
     labels = []
-    for label in re.findall(r"(?:\([a-z]\)\s*)?([A-Z][A-Za-z /-]{2,60})(?::|\s*\()", clause_text):
+    # Named roles/items must be explicit labels ending in a colon. A capitalized
+    # phrase before a number, e.g. "Authority within twenty-four (24)", is prose.
+    for label in re.findall(r"(?:^|[\n.;])\s*(?:\([a-z0-9]+\)\s*)?([A-Z][A-Za-z /&-]{2,60})\s*:", clause_text, re.M):
         clean = " ".join(label.split()).strip(" -/")
         if clean.lower() not in {item.lower() for item in labels} and len(clean.split()) <= 8:
             labels.append(clean)
@@ -42,6 +44,22 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
     gaps = [f"No action-linked evidence found for required named role/item: {label}." for label in missing]
     checks = [{"requirement": label, "status": "PROVEN" if label in supported else "MISSING"} for label in labels]
     lower_clause, lower_evidence = clause_text.lower(), evidence.lower()
+    if any(term in lower_clause for term in ("report", "notify", "notification", "escalat")):
+        reporting_proof = re.search(r"\b(?:report(?:ed|ing)?|notif(?:y|ied|ication)|escalat(?:e|ed|ion))\b.{0,180}\b(?:incident|authority|team|register|ticket|reference|timestamp)\b", lower_evidence, re.S)
+        if reporting_proof:
+            matched.append("Incident reporting/escalation language is linked to an operational record or responsible party.")
+            checks.append({"requirement": "Reporting/escalation process", "status": "PARTIAL"})
+        else:
+            gaps.append("No action-linked incident reporting/escalation procedure or record was found.")
+            checks.append({"requirement": "Reporting/escalation process", "status": "MISSING"})
+    deadlines = sorted(set(re.findall(r"\b(\d{1,3})\s*\)?\s*(?:hours?|hrs?|days?)\b", lower_clause)))
+    for deadline in deadlines:
+        if re.search(rf"\b{re.escape(deadline)}\s*(?:hours?|hrs?|days?)\b", lower_evidence):
+            matched.append(f"The evidence mentions the source deadline value ({deadline}); execution timestamps still require reviewer validation.")
+            checks.append({"requirement": f"Deadline {deadline}", "status": "PARTIAL"})
+        else:
+            gaps.append(f"Evidence does not show the source deadline value ({deadline}) with an hours/days unit.")
+            checks.append({"requirement": f"Deadline {deadline}", "status": "MISSING"})
     if any(term in lower_clause for term in ("annually", "annual", "once a year", "every year")) and not re.search(r"\b(?:20\d{2}|annual(?:ly)?|yearly)\b", lower_evidence):
         gaps.append("Annual recurrence or dated yearly execution evidence was not found.")
         checks.append({"requirement": "Annual recurrence", "status": "MISSING"})
@@ -77,7 +95,16 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
         # Local automation cannot authenticate a document or approve evidence.
         status = "PARTIAL"
         gaps.append("Automated checks found no obvious gap, but document authenticity and operating effectiveness require human review.")
-    return {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "engine": "LOCAL_RULES_V2"}
+    observations = [
+        {
+            "filename": doc.get("filename", "evidence"),
+            "extracted_characters": len(doc.get("text", "").strip()),
+            "embedded_images": doc.get("embedded_images", 0),
+            "readability": "READABLE" if len(doc.get("text", "").strip()) >= 40 else "UNREADABLE_OR_IMAGE_ONLY",
+        }
+        for doc in documents
+    ]
+    return {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
 
 
 def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None):
