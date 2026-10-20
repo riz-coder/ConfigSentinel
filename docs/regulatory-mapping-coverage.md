@@ -44,3 +44,7 @@ also reports document presence, governance markers (purpose, scope, ownership,
 approval, version and review/effective date), and potential coverage of exact
 source-derived fragments. Potential coverage is not legal mapping approval,
 document authentication, evidence acceptance or operating-effectiveness proof.
+Screenshots, logs and other operational artifacts are presented separately as
+supporting evidence. They can corroborate a specific operational signal (for
+example, backup/recovery activity) but cannot stand in for a required controlled
+document such as a policy, procedure, BIA or plan.

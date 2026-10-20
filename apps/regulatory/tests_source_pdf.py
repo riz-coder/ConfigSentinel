@@ -140,6 +140,10 @@ class SourcePdfIntakeTests(TestCase):
         self.assertEqual(assessment["status"], "MISSING")
         self.assertTrue(any("Documented business impact analysis is missing" in gap for gap in result["gaps"]))
         self.assertTrue(any(check["requirement"] == "Annual recurrence" and check["status"] == "MISSING" for check in result["requirement_checks"]))
+        support = assessment["supporting_evidence"][0]
+        self.assertEqual(support["classification"], "SUPPORTING_OPERATIONAL_EVIDENCE")
+        self.assertIn("Backup/recovery activity", support["supports"])
+        self.assertIn("does not replace", support["limitation"])
 
     def test_withdraw_purges_ciphertext_and_keeps_only_tombstone(self):
         source, version = upload_source_pdf(

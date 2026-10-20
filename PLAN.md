@@ -33,6 +33,9 @@ now receive a separate document assessment: candidate-document presence,
 document-control fields, and source-derived content-topic coverage. All matches
 remain preliminary and unverified; no policy is accepted from filename or
 keyword presence alone.
+Operational screenshots/logs are classified separately as supporting evidence.
+They may corroborate a narrow operational activity but never replace a required
+controlled policy, plan, BIA, SOP or procedure.
 
 ## In scope
 

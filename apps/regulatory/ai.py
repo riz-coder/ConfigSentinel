@@ -67,6 +67,7 @@ def _document_requirement_assessment(clause_text, documents):
             candidates.append(doc)
     required_label = "/".join(kinds)
     topics = _source_requirement_topics(clause_text)
+    supporting_evidence = _supporting_evidence_assessment(readable, candidates)
     if not candidates:
         return {
             "required_type": required_label,
@@ -74,6 +75,7 @@ def _document_requirement_assessment(clause_text, documents):
             "documents": [],
             "governance": [],
             "coverage": [{"source_requirement": topic, "status": "MISSING"} for topic in topics],
+            "supporting_evidence": supporting_evidence,
         }
     combined = " ".join(doc.get("text", "") for doc in candidates)
     lower = combined.lower()
@@ -100,7 +102,32 @@ def _document_requirement_assessment(clause_text, documents):
         "documents": [doc.get("filename", "evidence") for doc in candidates],
         "governance": governance,
         "coverage": coverage,
+        "supporting_evidence": supporting_evidence,
     }
+
+
+def _supporting_evidence_assessment(documents, controlled_documents):
+    """Classify operational proof without allowing it to replace the required document."""
+    controlled_ids = {id(doc) for doc in controlled_documents}
+    results = []
+    signals = (
+        ("Backup/recovery activity", r"\b(?:backup|restore|recovery|snapshot)\b"),
+        ("Scheduled operational task", r"\b(?:schedule|scheduled|every day|daily|task)\b"),
+        ("Risk-assessment activity", r"\b(?:risk assessment|threat|vulnerabilit)\b"),
+        ("Service/process inventory", r"\b(?:critical service|business process|inventory)\b"),
+    )
+    for doc in documents:
+        if id(doc) in controlled_ids:
+            continue
+        text = doc.get("text", "").lower()
+        matched = [label for label, pattern in signals if re.search(pattern, text, re.I)]
+        results.append({
+            "filename": doc.get("filename", "evidence"),
+            "classification": "SUPPORTING_OPERATIONAL_EVIDENCE" if matched else "UNCLASSIFIED_SUPPORTING_EVIDENCE",
+            "supports": matched,
+            "limitation": "Supports operational activity only; it does not replace the required controlled document or prove all clause requirements.",
+        })
+    return results
 
 
 def redact(text):
@@ -147,6 +174,9 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
             missing_topics = [item["source_requirement"] for item in document_requirement["coverage"] if item["status"] == "MISSING"]
             for topic in missing_topics:
                 gaps.append(f"Submitted {required_type} does not show coverage of this source-derived requirement: {topic}")
+        for item in document_requirement["supporting_evidence"]:
+            if item["classification"] == "SUPPORTING_OPERATIONAL_EVIDENCE":
+                matched.append(f"Supporting operational evidence identified: {item['filename']} ({', '.join(item['supports'])}). It does not replace the required {required_type}.")
     if any(term in lower_clause for term in ("report", "notify", "notification", "escalat")):
         reporting_proof = re.search(r"\b(?:report(?:ed|ing)?|notif(?:y|ied|ication)|escalat(?:e|ed|ion))\b.{0,180}\b(?:incident|authority|team|register|ticket|reference|timestamp)\b", lower_evidence, re.S)
         if reporting_proof:
@@ -207,6 +237,7 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
             "ocr_used": bool(doc.get("ocr_used")),
             "ocr_confidence": doc.get("ocr_confidence"),
             "readability": "READABLE" if len(doc.get("text", "").strip()) >= 40 else "UNREADABLE_OR_IMAGE_ONLY",
+            "evidence_role": "CONTROLLED_DOCUMENT_CANDIDATE" if document_requirement and doc.get("filename") in document_requirement["documents"] else "SUPPORTING_EVIDENCE",
         }
         for doc in documents
     ]
