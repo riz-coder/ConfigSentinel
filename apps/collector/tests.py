@@ -58,10 +58,18 @@ class CollectorBoundaryTests(TestCase):
         self.assertFalse(CollectionJob.objects.exists())
 
     def test_expired_scope_fails_closed(self):
-        ScopeGrant.objects.filter(pk=self.grant.pk).update(valid_until=timezone.now() - timedelta(seconds=1))
-        self.grant.refresh_from_db()
+        now = timezone.now()
+        expired = ScopeGrant.objects.create(
+            tenant=self.tenant, device=self.device, agent=self.agent, credential=self.credential,
+            authorization_reference="AUTH-EXPIRED", purpose="Expired authorization test",
+            valid_from=now - timedelta(hours=2), valid_until=now - timedelta(hours=1),
+            max_commands=1, max_runtime_seconds=30, max_output_bytes=1024,
+            requested_by=self.owner,
+        )
+        approve_scope(grant=expired, actor=self.reviewer)
+        expired.refresh_from_db()
         with self.assertRaisesMessage(ValidationError, "current approved"):
-            self.request_job()
+            self.request_job(scope_grant=expired)
 
     def test_one_active_job_per_device(self):
         self.request_job()
