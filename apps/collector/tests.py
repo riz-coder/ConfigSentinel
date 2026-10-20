@@ -69,13 +69,15 @@ class CollectorBoundaryTests(TestCase):
             self.request_job()
 
     def test_self_approval_is_rejected(self):
-        self.grant.status = ScopeGrant.Status.DRAFT
-        self.grant.approved_by = None
-        self.grant.approved_at = None
-        self.grant.requested_by = self.reviewer
-        self.grant.save()
+        now = timezone.now()
+        grant = ScopeGrant.objects.create(
+            tenant=self.tenant, device=self.device, agent=self.agent, credential=self.credential,
+            authorization_reference="AUTH-SELF-REVIEW", purpose="Self-review rejection test",
+            valid_from=now, valid_until=now + timedelta(hours=1), max_commands=1,
+            max_runtime_seconds=30, max_output_bytes=1024, requested_by=self.reviewer,
+        )
         with self.assertRaisesMessage(ValidationError, "different authorized reviewer"):
-            approve_scope(grant=self.grant, actor=self.reviewer)
+            approve_scope(grant=grant, actor=self.reviewer)
 
     def test_secret_reference_never_returned(self):
         response = self.api_client(self.owner).get("/api/v1/credential-references/", HTTP_X_TENANT_ID=str(self.tenant.id))
