@@ -39,7 +39,7 @@ def analyze_clause(*, clause_text, evidence_texts):
         with urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode())
         result = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
-    except (HTTPError, URLError, KeyError, IndexError, json.JSONDecodeError) as exc:
+    except (HTTPError, URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as exc:
         raise ValidationError("AI assessment could not be completed; no finding was recorded.") from exc
     if result.get("status") not in {"COMPLIANT", "PARTIAL", "NON_COMPLIANT", "INSUFFICIENT_EVIDENCE"}:
         raise ValidationError("AI returned an invalid assessment state.")
