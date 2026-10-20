@@ -36,3 +36,6 @@ approval/signature indicators, readability, embedded-image limitations and
 repetitive-text risk. A keyword occurrence alone is not proof. These results do
 not authenticate a document, accept evidence, verify a legal mapping or issue a
 legal compliance conclusion; those decisions remain human workflows.
+JPG/JPEG/PNG files and image-only DOCX media are processed with local OCR. Only
+recognized text participates in preliminary checks; image authenticity and the
+depicted real-world event remain subject to human review.

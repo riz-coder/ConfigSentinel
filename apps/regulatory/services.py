@@ -5,6 +5,7 @@ import os
 import re
 import zipfile
 from io import BytesIO
+from threading import Lock
 
 from pypdf import PdfReader
 
@@ -38,6 +39,26 @@ from .models import (
 )
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .ai import analyze_clause
+
+_OCR_ENGINE = None
+_OCR_LOCK = Lock()
+
+
+def _local_ocr(image_bytes):
+    """Extract visible text locally; evidence bytes never leave the process."""
+    global _OCR_ENGINE
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        with _OCR_LOCK:
+            if _OCR_ENGINE is None:
+                _OCR_ENGINE = RapidOCR()
+            result, _ = _OCR_ENGINE(image_bytes)
+    except Exception:
+        return "", None
+    lines = result or []
+    text = "\n".join(str(line[1]) for line in lines if len(line) >= 3)
+    confidence = round(sum(float(line[2]) for line in lines) / len(lines), 3) if lines else None
+    return text, confidence
 
 
 @transaction.atomic
@@ -181,6 +202,8 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
         raw = LocalEncryptedObjectStore().retrieve_and_verify(item)
         text = ""
         embedded_images = 0
+        ocr_used = False
+        ocr_confidence = None
         if item.original_filename.lower().endswith((".txt", ".csv")):
             text = raw.decode("utf-8", errors="replace")
         elif item.original_filename.lower().endswith(".pdf"):
@@ -189,8 +212,20 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
             try:
                 with zipfile.ZipFile(BytesIO(raw)) as archive:
                     xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
-                    embedded_images = len([name for name in archive.namelist() if name.startswith("word/media/")])
-                text = re.sub(r"<[^>]+>", " ", xml).replace("&amp;", "&")
+                    media = [name for name in archive.namelist() if name.startswith("word/media/")][:10]
+                    embedded_images = len(media)
+                    text = re.sub(r"<[^>]+>", " ", xml).replace("&amp;", "&")
+                    if len(text.strip()) < 40 and media:
+                        ocr_parts, confidences = [], []
+                        for name in media:
+                            extracted, confidence = _local_ocr(archive.read(name))
+                            if extracted:
+                                ocr_parts.append(extracted)
+                            if confidence is not None:
+                                confidences.append(confidence)
+                        text = "\n".join(ocr_parts)
+                        ocr_used = True
+                        ocr_confidence = round(sum(confidences) / len(confidences), 3) if confidences else None
             except (KeyError, zipfile.BadZipFile):
                 pass
         elif item.original_filename.lower().endswith(".xlsx"):
@@ -203,7 +238,10 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
                     text = " ".join(parts)
             except zipfile.BadZipFile:
                 pass
-        documents.append({"filename": item.original_filename, "text": text, "embedded_images": embedded_images, "size_bytes": item.size_bytes})
+        elif item.original_filename.lower().endswith((".jpg", ".jpeg", ".png")):
+            text, ocr_confidence = _local_ocr(raw)
+            ocr_used = True
+        documents.append({"filename": item.original_filename, "text": text, "embedded_images": embedded_images, "size_bytes": item.size_bytes, "ocr_used": ocr_used, "ocr_confidence": ocr_confidence})
     result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_documents=documents)
     return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
         evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=result.get("engine", "LOCAL_RULES_V2"), created_by=actor)

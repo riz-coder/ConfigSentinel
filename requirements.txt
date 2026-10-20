@@ -9,6 +9,7 @@ jsonschema==4.25.1
 psycopg[binary]==3.2.13
 pypdf==6.8.0
 python-dotenv==1.2.2
+rapidocr-onnxruntime==1.4.4
 PyYAML==6.0.3
 qrcode==8.2
 uritemplate==4.2.0

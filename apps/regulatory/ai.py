@@ -100,6 +100,8 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
             "filename": doc.get("filename", "evidence"),
             "extracted_characters": len(doc.get("text", "").strip()),
             "embedded_images": doc.get("embedded_images", 0),
+            "ocr_used": bool(doc.get("ocr_used")),
+            "ocr_confidence": doc.get("ocr_confidence"),
             "readability": "READABLE" if len(doc.get("text", "").strip()) >= 40 else "UNREADABLE_OR_IMAGE_ONLY",
         }
         for doc in documents

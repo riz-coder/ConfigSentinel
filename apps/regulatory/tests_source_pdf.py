@@ -9,7 +9,7 @@ from django.test import TestCase
 from apps.tenancy.models import Membership, Tenant
 
 from .models import ClauseEvidence, LegalSourceStatus, Regulation, SourceDocument, SubClause
-from .services import extract_source_regulations, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
+from .services import analyze_clause_evidence, extract_source_regulations, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .ai import analyze_clause, deterministic_assessment
 
@@ -124,3 +124,27 @@ class SourcePdfIntakeTests(TestCase):
         self.assertIsNotNone(artifact.purged_at)
         self.assertEqual(artifact.wrapped_dek, "")
         self.assertFalse(ClauseEvidence.objects.filter(pk=artifact.pk, withdrawn_at__isnull=True).exists())
+
+    @patch("apps.regulatory.services._local_ocr", return_value=("Annual approved training attendance record dated 2026.", 0.94))
+    def test_jpeg_evidence_uses_local_ocr(self, mocked_ocr):
+        source, version = upload_source_pdf(
+            tenant=self.tenant, actor=self.user, title="OCR Source", version_label="v1",
+            filename="source.pdf", content=b"%PDF-1.4 source",
+        )
+        regulation = Regulation.objects.create(
+            version=version, number=8,
+            source_excerpt="Annual approved training shall be conducted.",
+        )
+        clause = SubClause.objects.create(regulation=regulation, clause_path="8", title="Training", source_page="1")
+        upload_clause_evidence(
+            tenant=self.tenant, actor=self.user, subclause=clause, title="Photo",
+            filename="training.jpeg", content=b"synthetic-image-fixture",
+        )
+
+        analysis = analyze_clause_evidence(tenant=self.tenant, actor=self.user, subclause=clause)
+
+        mocked_ocr.assert_called_once()
+        observation = analysis.result["document_observations"][0]
+        self.assertEqual(observation["readability"], "READABLE")
+        self.assertTrue(observation["ocr_used"])
+        self.assertEqual(observation["ocr_confidence"], 0.94)

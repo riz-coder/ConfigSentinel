@@ -24,6 +24,10 @@ image-only evidence, and suspicious repetition. Gemini remains disabled.
 Withdrawal now purges the encrypted blob and wrapped key material, removes the
 file from active UI/context, retains a minimal audit tombstone, and recalculates
 the preliminary finding from the remaining active evidence.
+Local RapidOCR processing now extracts visible text from JPG/JPEG/PNG files and
+image-only DOCX evidence without sending evidence to an external service. OCR
+output remains untrusted supporting material and cannot authenticate a photo,
+signature, attendance event, date or operating effectiveness.
 
 ## In scope
 
