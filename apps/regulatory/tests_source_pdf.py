@@ -103,6 +103,29 @@ class SourcePdfIntakeTests(TestCase):
         self.assertEqual(result["status"], "INSUFFICIENT_EVIDENCE")
         self.assertTrue(any("manual visual review" in gap for gap in result["gaps"]))
 
+    def test_required_policy_is_reported_missing_when_no_policy_document_exists(self):
+        result = deterministic_assessment(
+            "The licensee shall establish an information security policy.\n(a) The policy shall define access control responsibilities.",
+            evidence_documents=[{"filename": "attendance.csv", "text": "employee,date\nA,2026-01-01" * 4}],
+        )
+
+        self.assertEqual(result["document_requirement"]["status"], "MISSING")
+        self.assertTrue(any("Documented policy is missing" in gap for gap in result["gaps"]))
+
+    def test_policy_presence_governance_and_content_are_reported_separately(self):
+        result = deterministic_assessment(
+            "The licensee shall maintain a security policy.\n(a) The policy shall define access control responsibilities.",
+            evidence_documents=[{
+                "filename": "security_policy.docx",
+                "text": "Security Policy Purpose Scope Document owner Version 2 Approved 2026. Access control responsibilities are assigned and reviewed.",
+            }],
+        )
+
+        assessment = result["document_requirement"]
+        self.assertEqual(assessment["status"], "PRESENT_UNVERIFIED")
+        self.assertTrue(all(item["status"] == "PRESENT" for item in assessment["governance"]))
+        self.assertEqual(assessment["coverage"][0]["status"], "POTENTIALLY_COVERED")
+
     def test_withdraw_purges_ciphertext_and_keeps_only_tombstone(self):
         source, version = upload_source_pdf(
             tenant=self.tenant, actor=self.user, title="Source", version_label="v1",

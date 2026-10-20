@@ -28,6 +28,11 @@ Local RapidOCR processing now extracts visible text from JPG/JPEG/PNG files and
 image-only DOCX evidence without sending evidence to an external service. OCR
 output remains untrusted supporting material and cannot authenticate a photo,
 signature, attendance event, date or operating effectiveness.
+Clauses that explicitly require a policy/procedure/plan/programme/framework/SOP
+now receive a separate document assessment: candidate-document presence,
+document-control fields, and source-derived content-topic coverage. All matches
+remain preliminary and unverified; no policy is accepted from filename or
+keyword presence alone.
 
 ## In scope
 

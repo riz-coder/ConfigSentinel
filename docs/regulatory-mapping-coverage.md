@@ -39,3 +39,8 @@ legal compliance conclusion; those decisions remain human workflows.
 JPG/JPEG/PNG files and image-only DOCX media are processed with local OCR. Only
 recognized text participates in preliminary checks; image authenticity and the
 depicted real-world event remain subject to human review.
+For source text that explicitly names a controlled document type, the engine
+also reports document presence, governance markers (purpose, scope, ownership,
+approval, version and review/effective date), and potential coverage of exact
+source-derived fragments. Potential coverage is not legal mapping approval,
+document authentication, evidence acceptance or operating-effectiveness proof.

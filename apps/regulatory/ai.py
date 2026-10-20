@@ -14,6 +14,88 @@ REDACTIONS = (
     (re.compile(r"\b(?:\+92|0)3\d{9}\b"), "[REDACTED_PHONE]"),
 )
 
+STOPWORDS = {
+    "about", "after", "against", "also", "and", "any", "are", "been", "being", "but", "for",
+    "from", "has", "have", "into", "its", "may", "must", "not", "of", "on", "or", "shall",
+    "should", "such", "that", "the", "their", "these", "this", "to", "under", "which", "with",
+}
+
+
+def _keywords(text):
+    return {word for word in re.findall(r"[a-z]{4,}", text.lower()) if word not in STOPWORDS}
+
+
+def _source_requirement_topics(clause_text):
+    """Return exact, compact source-derived requirement fragments without inventing obligations."""
+    normalized = re.sub(r"\r", "", clause_text)
+    marker = re.compile(r"(?:^|\n)\s*\((?:\d+|[a-z]|[ivx]+)\)\s+", re.I)
+    starts = list(marker.finditer(normalized))
+    topics = []
+    for index, match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(normalized)
+        fragment = " ".join(normalized[match.end():end].split())
+        if 15 <= len(fragment) <= 600:
+            topics.append(fragment[:220])
+    if not topics:
+        for sentence in re.split(r"(?<=[.;])\s+|\n+", normalized):
+            compact = " ".join(sentence.split())
+            if 15 <= len(compact) <= 600 and re.search(r"\b(?:shall|must|required|ensure|maintain|establish|develop|formulate)\b", compact, re.I):
+                topics.append(compact[:220])
+    unique = []
+    for topic in topics:
+        if topic.lower() not in {item.lower() for item in unique}:
+            unique.append(topic)
+    return unique[:20]
+
+
+def _document_requirement_assessment(clause_text, documents):
+    lower_clause = clause_text.lower()
+    kinds = [kind for kind in ("policy", "procedure", "plan", "programme", "program", "framework", "sop") if re.search(rf"\b{kind}(?:s)?\b", lower_clause)]
+    if not kinds:
+        return None
+    readable = [doc for doc in documents if len(doc.get("text", "").strip()) >= 40]
+    candidates = []
+    for doc in readable:
+        identity = f"{doc.get('filename', '')} {doc.get('text', '')[:1500]}".lower()
+        if any(re.search(rf"\b{re.escape(kind)}(?:s)?\b", identity) for kind in kinds):
+            candidates.append(doc)
+    required_label = "/".join(kinds)
+    topics = _source_requirement_topics(clause_text)
+    if not candidates:
+        return {
+            "required_type": required_label,
+            "status": "MISSING",
+            "documents": [],
+            "governance": [],
+            "coverage": [{"source_requirement": topic, "status": "MISSING"} for topic in topics],
+        }
+    combined = " ".join(doc.get("text", "") for doc in candidates)
+    lower = combined.lower()
+    governance_patterns = (
+        ("Document purpose", r"\bpurpose\b"),
+        ("Scope", r"\bscope\b"),
+        ("Owner/responsibility", r"\b(?:owner|responsib|accountab)"),
+        ("Approval/signature", r"\b(?:approv|signature|signed by)"),
+        ("Version/document control", r"\b(?:version|revision|document control)\b"),
+        ("Effective/review date", r"\b(?:effective date|review date|next review|20\d{2})\b"),
+    )
+    governance = [{"item": name, "status": "PRESENT" if re.search(pattern, lower, re.I) else "MISSING"} for name, pattern in governance_patterns]
+    coverage = []
+    for topic in topics:
+        topic_words = _keywords(topic)
+        overlap = topic_words & _keywords(combined)
+        threshold = min(3, max(1, len(topic_words) // 2))
+        status = "POTENTIALLY_COVERED" if len(overlap) >= threshold else "MISSING"
+        coverage.append({"source_requirement": topic, "status": status})
+    has_missing = any(item["status"] == "MISSING" for item in governance + coverage)
+    return {
+        "required_type": required_label,
+        "status": "PARTIAL" if has_missing else "PRESENT_UNVERIFIED",
+        "documents": [doc.get("filename", "evidence") for doc in candidates],
+        "governance": governance,
+        "coverage": coverage,
+    }
+
 
 def redact(text):
     for pattern, replacement in REDACTIONS:
@@ -44,6 +126,21 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
     gaps = [f"No action-linked evidence found for required named role/item: {label}." for label in missing]
     checks = [{"requirement": label, "status": "PROVEN" if label in supported else "MISSING"} for label in labels]
     lower_clause, lower_evidence = clause_text.lower(), evidence.lower()
+    document_requirement = _document_requirement_assessment(clause_text, documents)
+    if document_requirement:
+        required_type = document_requirement["required_type"]
+        if document_requirement["status"] == "MISSING":
+            gaps.append(f"Documented {required_type} is missing; no readable active file was identified as the required controlled document.")
+            checks.append({"requirement": f"Documented {required_type}", "status": "MISSING"})
+        else:
+            matched.append(f"Required document type is present for preliminary review: {', '.join(document_requirement['documents'])}.")
+            checks.append({"requirement": f"Documented {required_type}", "status": document_requirement["status"]})
+            for item in document_requirement["governance"]:
+                if item["status"] == "MISSING":
+                    gaps.append(f"Document-control field missing from the submitted {required_type}: {item['item']}.")
+            missing_topics = [item["source_requirement"] for item in document_requirement["coverage"] if item["status"] == "MISSING"]
+            for topic in missing_topics:
+                gaps.append(f"Submitted {required_type} does not show coverage of this source-derived requirement: {topic}")
     if any(term in lower_clause for term in ("report", "notify", "notification", "escalat")):
         reporting_proof = re.search(r"\b(?:report(?:ed|ing)?|notif(?:y|ied|ication)|escalat(?:e|ed|ion))\b.{0,180}\b(?:incident|authority|team|register|ticket|reference|timestamp)\b", lower_evidence, re.S)
         if reporting_proof:
@@ -106,7 +203,7 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
         }
         for doc in documents
     ]
-    return {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
+    return {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_requirement": document_requirement, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
 
 
 def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None):
