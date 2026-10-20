@@ -5,6 +5,19 @@
 `WP-REG-02` — source PDF intake, reviewed clause register, clause-evidence
 workflow and operational dashboard.
 
+### Current bounded change: evidence intelligence safety gate
+
+- Pause all Gemini/public-LLM calls behind an explicit, default-off feature flag.
+- Keep the existing local keyword checks as preliminary triage only; they must
+  not accept evidence or issue a legal compliance conclusion.
+- Define the next evidence-intelligence design around file authenticity,
+  structured requirement decomposition, dates/recurrence, approvals/signatures,
+  cross-document consistency, image/OCR inspection and human review.
+- Acceptance: a configured API key still causes no outbound call while the flag
+  is disabled, and the result identifies the local preliminary engine.
+- Security threat: keyword stuffing must not convert an unsupported document
+  into accepted evidence or a verified compliance result.
+
 ## In scope
 
 - Add an encrypted official-source PDF intake path, a human-reviewed clause

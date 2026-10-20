@@ -11,7 +11,7 @@ from apps.tenancy.models import Membership, Tenant
 from .models import LegalSourceStatus, Regulation, SourceDocument
 from .services import extract_source_regulations, upload_source_pdf
 from apps.evidence.vault import LocalEncryptedObjectStore
-from .ai import deterministic_assessment
+from .ai import analyze_clause, deterministic_assessment
 
 
 class SourcePdfIntakeTests(TestCase):
@@ -64,3 +64,12 @@ class SourcePdfIntakeTests(TestCase):
         )
         self.assertEqual(result["status"], "NON_COMPLIANT")
         self.assertEqual(len(result["gaps"]), 2)
+
+    @patch.dict("os.environ", {"GEMINI_ENABLED": "false", "GEMINI_API_KEY": "configured-but-unused"})
+    @patch("apps.regulatory.ai.urlopen")
+    def test_gemini_is_not_called_while_feature_is_paused(self, mocked_urlopen):
+        result = analyze_clause(clause_text="Annual approved training is required.", evidence_texts=["training"])
+
+        mocked_urlopen.assert_not_called()
+        self.assertEqual(result["engine"], "LOCAL_RULES")
+        self.assertIn("paused", result["summary"].lower())

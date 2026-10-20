@@ -50,6 +50,10 @@ def deterministic_assessment(clause_text, evidence_texts):
 
 def analyze_clause(*, clause_text, evidence_texts):
     local = deterministic_assessment(clause_text, evidence_texts)
+    gemini_enabled = os.getenv("GEMINI_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    if not gemini_enabled:
+        local["summary"] += " External semantic AI review is paused."
+        return local
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         return local
