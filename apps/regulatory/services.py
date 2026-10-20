@@ -242,7 +242,19 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
             text, ocr_confidence = _local_ocr(raw)
             ocr_used = True
         documents.append({"filename": item.original_filename, "text": text, "embedded_images": embedded_images, "size_bytes": item.size_bytes, "ocr_used": ocr_used, "ocr_confidence": ocr_confidence})
-    result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_documents=documents)
+    obligations = list(subclause.obligations.all())
+    legal_mapping_verified = bool(obligations) and (
+        subclause.regulation.version.source.legal_status == LegalSourceStatus.VERIFIED
+        and subclause.regulation.version.approval_status == RegulatoryVersion.ApprovalStatus.APPROVED
+        and subclause.regulation.legal_status == LegalSourceStatus.VERIFIED
+        and subclause.legal_status == LegalSourceStatus.VERIFIED
+        and all(obligation.legal_status == LegalSourceStatus.VERIFIED and obligation.control_mappings.filter(status=ObligationControlMapping.Status.APPROVED).exists() for obligation in obligations)
+    )
+    result = analyze_clause(
+        clause_text=subclause.regulation.source_excerpt,
+        evidence_documents=documents,
+        legal_mapping_verified=legal_mapping_verified,
+    )
     return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
         evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=result.get("engine", "LOCAL_RULES_V2"), created_by=actor)
 

@@ -53,3 +53,9 @@ The displayed preliminary evidence-coverage percentage is a transparent
 completeness indicator, not a compliance score or legal conclusion. When a
 required controlled document is missing, supporting operational artifacts are
 capped at 10% so they cannot inflate the assessment.
+
+For operational triage, less than 50% preliminary evidence coverage is shown
+as `NON_COMPLIANT` and 50–99% as `PARTIAL`. At 100%, the UI remains
+`PARTIAL` with `EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING` unless the source,
+subclause and approved obligation mapping have all been verified; this protects
+against representing evidence completeness as a legal compliance conclusion.

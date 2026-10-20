@@ -40,6 +40,9 @@ Each preliminary finding now includes an evidence-coverage percentage with a
 visible non-legal disclaimer. If a required controlled document is missing,
 supporting screenshots/logs are capped at 10% coverage rather than inflating
 the result.
+Preliminary evidence status bands: below 50% is `NON_COMPLIANT`, 50–99% is
+`PARTIAL`, and 100% evidence remains `PARTIAL` pending verified legal mapping
+and independent review. A `COMPLIANT` state is only possible after those gates.
 
 ## In scope
 

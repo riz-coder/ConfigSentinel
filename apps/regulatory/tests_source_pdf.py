@@ -94,14 +94,25 @@ class SourcePdfIntakeTests(TestCase):
         self.assertIn("Deadline 24", requirements)
         self.assertTrue(result["document_observations"][0]["extracted_characters"] > 40)
 
-    def test_image_only_document_remains_insufficient(self):
+    def test_image_only_document_is_non_compliant_below_50_percent_coverage(self):
         result = deterministic_assessment(
             "Annual security awareness training shall be conducted.",
             evidence_documents=[{"filename": "photos.docx", "text": "", "embedded_images": 4}],
         )
 
-        self.assertEqual(result["status"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(result["status"], "NON_COMPLIANT")
+        self.assertEqual(result["preliminary_evidence_coverage"]["percent"], 0)
         self.assertTrue(any("manual visual review" in gap for gap in result["gaps"]))
+
+    def test_full_evidence_remains_partial_until_legal_mapping_is_verified(self):
+        result = deterministic_assessment(
+            "Security Officer: shall maintain the control.",
+            ["Security Officer is responsible to maintain the control."],
+        )
+
+        self.assertEqual(result["preliminary_evidence_coverage"]["percent"], 100)
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertEqual(result["preliminary_outcome"], "EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING")
 
     def test_required_policy_is_reported_missing_when_no_policy_document_exists(self):
         result = deterministic_assessment(

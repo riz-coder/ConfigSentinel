@@ -172,7 +172,7 @@ def redact(text):
     return text[:24000]
 
 
-def deterministic_assessment(clause_text, evidence_texts=None, evidence_documents=None):
+def deterministic_assessment(clause_text, evidence_texts=None, evidence_documents=None, legal_mapping_verified=False):
     """Conservative proof checks; keyword presence alone is never treated as proof."""
     documents = evidence_documents or [{"filename": "evidence", "text": text, "embedded_images": 0} for text in (evidence_texts or [])]
     readable = [doc for doc in documents if len(doc.get("text", "").strip()) >= 40]
@@ -253,18 +253,6 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
     if len(tokens) >= 30 and len(set(tokens)) / len(tokens) < 0.22:
         gaps.append("Evidence has unusually repetitive text and requires manual review for keyword stuffing or copied content.")
         checks.append({"requirement": "Content integrity", "status": "CONTRADICTED"})
-    if not documents:
-        status = "INSUFFICIENT_EVIDENCE"
-    elif not readable:
-        status = "INSUFFICIENT_EVIDENCE"
-    elif labels and len(missing) == len(labels):
-        status = "NON_COMPLIANT"
-    elif gaps:
-        status = "PARTIAL"
-    else:
-        # Local automation cannot authenticate a document or approve evidence.
-        status = "PARTIAL"
-        gaps.append("Automated checks found no obvious gap, but document authenticity and operating effectiveness require human review.")
     observations = [
         {
             "filename": doc.get("filename", "evidence"),
@@ -277,13 +265,30 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
         }
         for doc in documents
     ]
-    result = {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_requirement": document_requirement, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
+    result = {"status": "INSUFFICIENT_EVIDENCE", "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_requirement": document_requirement, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
     result["preliminary_evidence_coverage"] = preliminary_evidence_coverage(result)
+    percent = result["preliminary_evidence_coverage"]["percent"]
+    if percent < 50:
+        result["status"] = "NON_COMPLIANT"
+        result["preliminary_outcome"] = "NON_COMPLIANT"
+    elif percent < 100:
+        result["status"] = "PARTIAL"
+        result["preliminary_outcome"] = "PARTIAL"
+    elif legal_mapping_verified:
+        # Evidence coverage alone is never enough: only a verified mapped source
+        # permits the preliminary status to reach this state.
+        result["status"] = "COMPLIANT"
+        result["preliminary_outcome"] = "COMPLIANT"
+    else:
+        result["status"] = "PARTIAL"
+        result["preliminary_outcome"] = "EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING"
+        result["gaps"].append("Evidence coverage is complete, but legal source/mapping verification and independent review are still pending.")
+        result["next_evidence"] = result["gaps"]
     return result
 
 
-def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None):
-    local = deterministic_assessment(clause_text, evidence_texts, evidence_documents)
+def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None, legal_mapping_verified=False):
+    local = deterministic_assessment(clause_text, evidence_texts, evidence_documents, legal_mapping_verified)
     gemini_enabled = os.getenv("GEMINI_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
     if not gemini_enabled:
         local["summary"] += " External semantic AI review is paused."
@@ -312,7 +317,11 @@ def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None)
         raise ValidationError("AI returned an invalid assessment state.")
     result["engine"] = "HYBRID_LOCAL_GEMINI"
     result["local_checks"] = local
-    if local["status"] == "NON_COMPLIANT" and result["status"] == "COMPLIANT":
-        result["status"] = "PARTIAL"
+    result["preliminary_evidence_coverage"] = local["preliminary_evidence_coverage"]
+    if local["status"] == "NON_COMPLIANT":
+        result["status"] = "NON_COMPLIANT"
         result.setdefault("gaps", []).extend(local["gaps"])
+    elif local.get("preliminary_outcome") == "EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING":
+        result["status"] = "PARTIAL"
+        result.setdefault("gaps", []).append("Evidence is complete, but legal mapping verification is still pending.")
     return result
