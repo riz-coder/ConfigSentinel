@@ -69,8 +69,15 @@ def regulatory_center(request):
                 messages.success(request, f"{len(cards)} source clause cards were extracted for human review.")
             elif operation == "submit_evidence":
                 clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
-                upload_clause_evidence(tenant=tenant, actor=request.user, subclause=clause, title=request.POST["title"], filename=request.FILES["evidence"].name, content=request.FILES["evidence"].read())
-                messages.success(request, "Evidence encrypted and submitted for independent review.")
+                uploads = request.FILES.getlist("evidence")
+                if not uploads:
+                    raise ValidationError("Select at least one evidence file.")
+                allowed_extensions = {".pdf", ".docx", ".xlsx", ".csv", ".jpg", ".jpeg", ".png", ".txt"}
+                for upload in uploads:
+                    if not any(upload.name.lower().endswith(extension) for extension in allowed_extensions):
+                        raise ValidationError("Allowed formats: PDF, DOCX, XLSX, CSV, JPG, PNG, or TXT.")
+                    upload_clause_evidence(tenant=tenant, actor=request.user, subclause=clause, title=request.POST["title"], filename=upload.name, content=upload.read())
+                messages.success(request, f"{len(uploads)} evidence file(s) encrypted and submitted for independent review.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
