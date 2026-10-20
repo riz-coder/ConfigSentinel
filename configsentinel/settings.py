@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "apps.auditlog",
     "apps.regulatory",
     "apps.evidence",
+    "apps.collector",
 ]
 
 MIDDLEWARE = [

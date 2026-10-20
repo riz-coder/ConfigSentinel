@@ -1,0 +1,179 @@
+import uuid
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import Q
+
+from apps.tenancy.models import Tenant
+
+
+class Device(models.Model):
+    class Vendor(models.TextChoices):
+        CISCO = "CISCO", "Cisco"
+        HUAWEI = "HUAWEI", "Huawei"
+        MIKROTIK = "MIKROTIK", "MikroTik"
+        OTHER = "OTHER", "Other / unsupported"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="devices")
+    name = models.CharField(max_length=160)
+    vendor = models.CharField(max_length=20, choices=Vendor.choices)
+    platform = models.CharField(max_length=80, blank=True)
+    software_release = models.CharField(max_length=80, blank=True)
+    management_address = models.GenericIPAddressField()
+    ssh_port = models.PositiveIntegerField(default=22)
+    pinned_host_key_sha256 = models.CharField(max_length=95)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "management_address", "ssh_port"], name="unique_tenant_device_endpoint"),
+            models.CheckConstraint(condition=Q(ssh_port__gte=1, ssh_port__lte=65535), name="valid_device_ssh_port"),
+        ]
+
+    def clean(self):
+        if not self.pinned_host_key_sha256.startswith("SHA256:") or len(self.pinned_host_key_sha256) < 20:
+            raise ValidationError({"pinned_host_key_sha256": "A pinned SHA256 host-key fingerprint is required."})
+
+    def __str__(self):
+        return self.name
+
+
+class CredentialReference(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="credential_references")
+    name = models.CharField(max_length=120)
+    provider = models.CharField(max_length=40)
+    secret_reference = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["tenant", "name"], name="unique_tenant_credential_name")]
+
+    def clean(self):
+        if "://" not in self.secret_reference or self.secret_reference.lower().startswith(("http://", "https://")):
+            raise ValidationError({"secret_reference": "Use an opaque secrets-manager reference, never a URL or raw credential."})
+
+    def __str__(self):
+        return self.name
+
+
+class CollectorAgent(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACTIVE = "ACTIVE", "Active"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        REVOKED = "REVOKED", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="collector_agents")
+    name = models.CharField(max_length=120)
+    identity_fingerprint = models.CharField(max_length=95)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["tenant", "identity_fingerprint"], name="unique_tenant_agent_identity")]
+
+
+class CommandProfile(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft / non-executable"
+        APPROVED = "APPROVED", "Approved"
+        REVOKED = "REVOKED", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="command_profiles")
+    name = models.CharField(max_length=120)
+    vendor = models.CharField(max_length=20, choices=Device.Vendor.choices)
+    platform = models.CharField(max_length=80)
+    version = models.PositiveIntegerField(default=1)
+    manifest_sha256 = models.CharField(max_length=64)
+    command_count = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_command_profiles")
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_command_profiles")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["tenant", "name", "version"], name="unique_tenant_command_profile_version")]
+
+
+class ScopeGrant(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        APPROVED = "APPROVED", "Approved"
+        REVOKED = "REVOKED", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="scope_grants")
+    device = models.ForeignKey(Device, on_delete=models.PROTECT, related_name="scope_grants")
+    agent = models.ForeignKey(CollectorAgent, on_delete=models.PROTECT, related_name="scope_grants")
+    credential = models.ForeignKey(CredentialReference, on_delete=models.PROTECT, related_name="scope_grants")
+    authorization_reference = models.CharField(max_length=160)
+    purpose = models.TextField()
+    valid_from = models.DateTimeField()
+    valid_until = models.DateTimeField()
+    max_commands = models.PositiveSmallIntegerField()
+    max_runtime_seconds = models.PositiveIntegerField()
+    max_output_bytes = models.PositiveIntegerField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="requested_scope_grants")
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_scope_grants")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        related = [self.device, self.agent, self.credential]
+        if any(item.tenant_id != self.tenant_id for item in related):
+            raise ValidationError("Device, agent and credential reference must belong to the same tenant.")
+        if self.valid_until <= self.valid_from:
+            raise ValidationError({"valid_until": "Authorization end must be after its start."})
+        if not (1 <= self.max_commands <= 100 and 1 <= self.max_runtime_seconds <= 3600 and 1 <= self.max_output_bytes <= 100 * 1024 * 1024):
+            raise ValidationError("Collection budgets exceed the hard safety limits.")
+
+
+class CollectionJob(models.Model):
+    class State(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        CLAIMED = "CLAIMED", "Claimed"
+        RUNNING = "RUNNING", "Running"
+        SUCCEEDED = "SUCCEEDED", "Collection received"
+        FAILED = "FAILED", "Failed"
+        TIMED_OUT = "TIMED_OUT", "Timed out"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Result(models.TextChoices):
+        UNKNOWN = "UNKNOWN", "Unknown"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="collection_jobs")
+    device = models.ForeignKey(Device, on_delete=models.PROTECT, related_name="collection_jobs")
+    agent = models.ForeignKey(CollectorAgent, on_delete=models.PROTECT, related_name="collection_jobs")
+    scope_grant = models.ForeignKey(ScopeGrant, on_delete=models.PROTECT, related_name="collection_jobs")
+    command_profile = models.ForeignKey(CommandProfile, on_delete=models.PROTECT, related_name="collection_jobs")
+    observed_host_key_sha256 = models.CharField(max_length=95)
+    max_commands = models.PositiveSmallIntegerField()
+    max_runtime_seconds = models.PositiveIntegerField()
+    max_output_bytes = models.PositiveIntegerField()
+    state = models.CharField(max_length=16, choices=State.choices, default=State.QUEUED)
+    technical_result = models.CharField(max_length=16, choices=Result.choices, default=Result.UNKNOWN)
+    failure_reason = models.CharField(max_length=255, blank=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["device"], condition=Q(state__in=["QUEUED", "CLAIMED", "RUNNING"]), name="one_active_job_per_device"),
+        ]
+

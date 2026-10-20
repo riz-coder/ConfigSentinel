@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.auditlog.models import AuditEvent
 from apps.evidence.models import CustodyEvent, EvidenceArtifact
+from apps.collector.models import Device
 import base64
 
 from apps.regulatory.models import (
@@ -111,3 +112,26 @@ class PostgreSQLBoundaryTests(TransactionTestCase):
                 self.assertTrue(cursor.fetchone()[0], "Append-only database trigger must be installed")
             event.refresh_from_db()
             self.assertEqual(event.action, "guard.created")
+
+    @skipUnlessDBFeature("supports_transactions")
+    def test_collector_device_rls_boundary(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL-specific collector RLS test")
+        user = get_user_model().objects.create_user(username="collector-db-guard")
+        alpha = Tenant.objects.create(name="Collector DB Alpha", slug="collector-db-alpha")
+        beta = Tenant.objects.create(name="Collector DB Beta", slug="collector-db-beta")
+        with transaction.atomic():
+            set_rls_context(user_id=user.pk, tenant_id=alpha.pk)
+            device = Device.objects.create(
+                tenant=alpha, name="Synthetic device", vendor=Device.Vendor.CISCO,
+                platform="NX-OS", management_address="192.0.2.44",
+                pinned_host_key_sha256="SHA256:synthetic-db-fingerprint", created_by=user,
+            )
+            set_rls_context(user_id=user.pk, tenant_id=beta.pk)
+            self.assertFalse(Device.objects.filter(pk=device.pk).exists())
+            with self.assertRaises(DatabaseError), transaction.atomic():
+                Device.objects.create(
+                    tenant=alpha, name="Blocked device", vendor=Device.Vendor.CISCO,
+                    platform="NX-OS", management_address="192.0.2.45",
+                    pinned_host_key_sha256="SHA256:blocked-db-fingerprint", created_by=user,
+                )

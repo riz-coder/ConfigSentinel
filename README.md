@@ -91,3 +91,9 @@ Database role and backup details are in `docs/database-security.md`.
 The authenticated complete CTDISR 2025 Gazette is not present. Placeholder and
 unapproved imported regulations remain `SOURCE_PENDING`. See `PLAN.md` for
 package boundaries and known blockers.
+
+## Read-only collector foundation
+
+`/collector/` documents the device, external secret reference, agent identity and
+written scope inputs required for future collection. WP-COLLECT-01 deliberately
+ships no network transport or vendor commands. See `docs/collector-operations.md`.

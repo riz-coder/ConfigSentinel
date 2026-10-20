@@ -48,3 +48,17 @@ and collector links; administrator access; tenant-to-tenant boundary.
   versioning, HA, coordinated off-host backup, and proven key recovery. It must
   not receive customer evidence until those deployment controls are reviewed.
 
+## Collector trust boundary
+
+- Cross-tenant target substitution is blocked in service validation and forced
+  PostgreSQL RLS across every collector table.
+- Host spoofing fails closed unless the observed SSH fingerprint exactly matches
+  the out-of-band pinned fingerprint.
+- Raw credentials are excluded by design: only write-only opaque vault references
+  are accepted and they are omitted from API/UI/audit output.
+- Written scope is exact, time-bounded and independently approved; hard command,
+  runtime and output ceilings are copied into each job.
+- A database constraint prevents concurrent active jobs per device.
+- No transport or command execution exists in this package, eliminating network
+  side effects while signed agents and reviewed command packs are unfinished.
+

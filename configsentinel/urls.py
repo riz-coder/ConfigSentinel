@@ -14,6 +14,8 @@ from apps.regulatory.api import (
 from apps.regulatory.views import dashboard, mapping_center, regulatory_center
 from apps.evidence.api import EvidenceArtifactViewSet
 from apps.evidence.views import evidence_center, evidence_download
+from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceViewSet, ScopeGrantViewSet
+from apps.collector.views import collector_center
 from apps.security.views import MFASetupView, MFAVerifyView
 
 router = DefaultRouter()
@@ -26,6 +28,12 @@ router.register("test-procedures", TestProcedureViewSet, basename="test-procedur
 router.register("evidence-requirements", EvidenceRequirementViewSet, basename="evidence-requirement")
 router.register("obligation-mappings", ObligationControlMappingViewSet, basename="obligation-mapping")
 router.register("evidence", EvidenceArtifactViewSet, basename="evidence")
+router.register("devices", DeviceViewSet, basename="device")
+router.register("credential-references", CredentialReferenceViewSet, basename="credential-reference")
+router.register("collector-agents", CollectorAgentViewSet, basename="collector-agent")
+router.register("command-profiles", CommandProfileViewSet, basename="command-profile")
+router.register("scope-grants", ScopeGrantViewSet, basename="scope-grant")
+router.register("collection-jobs", CollectionJobViewSet, basename="collection-job")
 
 urlpatterns = [
     path("health/", lambda request: JsonResponse({"status": "ok"}), name="health"),
@@ -40,6 +48,7 @@ urlpatterns = [
     path("regulatory/mappings/", mapping_center, name="mapping-center"),
     path("evidence/", evidence_center, name="evidence-center"),
     path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
+    path("collector/", collector_center, name="collector-center"),
     path("", dashboard, name="dashboard"),
 ]
 

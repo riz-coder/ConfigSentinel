@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Collector trust boundary · {{ product_name }}{% endblock %}
+{% block content %}
+<h1>Read-only collector setup</h1>
+<div class="warning"><strong>Safe foundation only:</strong> no network connection or device command is implemented. A separately reviewed command profile and explicit written authorization are required before any future collection.</div>
+<p>This page shows what you must provide: device endpoint and pinned host key, an external vault reference (never the password), an agent identity, and a time-bounded scope approval.</p>
+<div class="grid">
+  <div class="card"><div>Devices</div><div class="value">{{ devices|length }}</div></div>
+  <div class="card"><div>Secret references</div><div class="value">{{ credential_references|length }}</div></div>
+  <div class="card"><div>Agents</div><div class="value">{{ agents|length }}</div></div>
+  <div class="card"><div>Scope grants</div><div class="value">{{ scope_grants|length }}</div></div>
+</div>
+<div class="card" style="margin-top:1rem"><h2>Setup order</h2><ol><li>Register the device and verify its SSH host-key fingerprint out of band.</li><li>Create a read-only account in your approved secrets manager, then enter only its opaque reference through the API.</li><li>Register and activate the customer-side collector identity.</li><li>Create a written, time-bounded scope grant with command/time/output budgets; a different operator approves it.</li><li>Import a separately reviewed signed command profile in a later package. Until then collection remains blocked.</li></ol></div>
+<div class="card" style="margin-top:1rem"><h2>Devices</h2><table><tr><th>Name</th><th>Vendor/platform</th><th>Host key</th><th>State</th></tr>{% for item in devices %}<tr><td>{{ item.name }}</td><td>{{ item.vendor }} {{ item.platform }}</td><td>{{ item.pinned_host_key_sha256|truncatechars:28 }}</td><td>{% if item.is_active %}ACTIVE{% else %}DISABLED{% endif %}</td></tr>{% empty %}<tr><td colspan="4">No device registered. Use <code>POST /api/v1/devices/</code>.</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-top:1rem"><h2>Authorization scopes</h2><table><tr><th>Device</th><th>Agent</th><th>Authorization</th><th>Status</th></tr>{% for item in scope_grants %}<tr><td>{{ item.device.name }}</td><td>{{ item.agent.name }}</td><td>{{ item.authorization_reference }}</td><td>{{ item.status }}</td></tr>{% empty %}<tr><td colspan="4">No written scope grant recorded.</td></tr>{% endfor %}</table></div>
+<div class="card" style="margin-top:1rem"><h2>Collection jobs</h2><table><tr><th>Device</th><th>State</th><th>Technical result</th><th>Created</th></tr>{% for item in jobs %}<tr><td>{{ item.device.name }}</td><td>{{ item.state }}</td><td>{{ item.technical_result }}</td><td>{{ item.created_at }}</td></tr>{% empty %}<tr><td colspan="4">No jobs. Collection is intentionally blocked until all safety gates exist.</td></tr>{% endfor %}</table></div>
+{% endblock %}
