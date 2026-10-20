@@ -93,7 +93,7 @@ def regulatory_center(request):
     )
     for version in versions:
         version.coverage = coverage_report(version)
-        version.regulations = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence"))
+        version.clause_cards = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence"))
     return render(request, "regulatory/center.html", {
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),
