@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import close_old_connections
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
 from threading import Thread
@@ -28,12 +29,32 @@ def dashboard(request):
     # and must not distort a customer's operational dashboard.
     sources = RegulatorySource.objects.filter(tenant=tenant).exclude(title__startswith="Framework source")
     regulations = Regulation.objects.filter(version__source__in=sources)
-    evidence = ClauseEvidence.objects.filter(tenant=tenant, subclause__regulation__version__source__in=sources)
+    evidence = ClauseEvidence.objects.filter(tenant=tenant, subclause__regulation__version__source__in=sources, withdrawn_at__isnull=True)
     clause_count = regulations.count()
     submitted_clause_count = evidence.values("subclause_id").distinct().count()
     accepted_clause_count = evidence.filter(status=ClauseEvidence.Status.ACCEPTED).values("subclause_id").distinct().count()
     evidence_coverage = round((submitted_clause_count / clause_count) * 100) if clause_count else 0
     jobs = ClauseAnalysisJob.objects.filter(tenant=tenant)
+    latest_status = ClauseAIAnalysis.objects.filter(subclause=OuterRef("pk")).order_by("-created_at").values("status")[:1]
+    clauses = SubClause.objects.filter(regulation__version__source__in=sources).annotate(latest_status=Subquery(latest_status))
+    submitted_ids = set(evidence.values_list("subclause_id", flat=True))
+    counts = {status: 0 for status in ("COMPLIANT", "PARTIAL", "NON_COMPLIANT", "INSUFFICIENT_EVIDENCE")}
+    awaiting_count = 0
+    for clause in clauses:
+        if clause.pk not in submitted_ids:
+            continue
+        if clause.latest_status in counts:
+            counts[clause.latest_status] += 1
+        else:
+            awaiting_count += 1
+    no_evidence_count = max(clause_count - len(submitted_ids), 0)
+    total = clause_count or 1
+    values = [counts["COMPLIANT"], counts["PARTIAL"], counts["NON_COMPLIANT"], counts["INSUFFICIENT_EVIDENCE"], awaiting_count, no_evidence_count]
+    cumulative, stops = 0.0, []
+    colors = ["#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#3b82f6", "#cbd5e1"]
+    for color, value in zip(colors, values):
+        start, cumulative = cumulative, cumulative + (value * 100 / total)
+        stops.append(f"{color} {start:.2f}% {cumulative:.2f}%")
     return render(
         request,
         "dashboard.html",
@@ -46,8 +67,12 @@ def dashboard(request):
             "legal_unverified_count": regulations.filter(legal_status=LegalSourceStatus.SOURCE_PENDING).count(),
             "evidence_coverage": evidence_coverage,
             "analysis_running_count": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).count(),
-            "analysis_completed_count": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).count(),
             "analysis_error_count": jobs.filter(status=ClauseAnalysisJob.Status.ERROR).count(),
+            "analysis_completed_count": sum(counts.values()),
+            "compliant_count": counts["COMPLIANT"], "partial_count": counts["PARTIAL"],
+            "non_compliant_count": counts["NON_COMPLIANT"], "insufficient_count": counts["INSUFFICIENT_EVIDENCE"],
+            "awaiting_analysis_count": awaiting_count, "no_evidence_count": no_evidence_count,
+            "pie_gradient": ", ".join(stops),
             "running_jobs": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).select_related("subclause__regulation")[:10],
             "completed_jobs": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).select_related("subclause__regulation")[:10],
             "sources": sources[:10],
