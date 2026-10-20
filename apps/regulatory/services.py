@@ -175,7 +175,7 @@ def upload_clause_evidence(*, tenant, actor, subclause, title, filename, content
 def analyze_clause_evidence(*, tenant, actor, subclause):
     if subclause.regulation.version.source.tenant_id != tenant.id:
         raise PermissionDenied("Clause is not available in this tenant.")
-    evidence = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=subclause))
+    evidence = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=subclause, withdrawn_at__isnull=True))
     text_items = []
     for item in evidence:
         raw = LocalEncryptedObjectStore().retrieve_and_verify(item)

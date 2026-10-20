@@ -93,6 +93,8 @@ class ClauseEvidence(models.Model):
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_clause_evidence")
     review_note = models.TextField(blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="withdrawn_clause_evidence")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

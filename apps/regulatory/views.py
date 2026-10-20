@@ -110,6 +110,14 @@ def regulatory_center(request):
                         close_old_connections()
                 Thread(target=run_analysis, daemon=True).start()
                 messages.success(request, "Evidence received. AI analysis is running in the background; refresh this card shortly for the updated finding.")
+            elif operation == "withdraw_evidence":
+                item = get_object_or_404(ClauseEvidence, pk=request.POST.get("evidence"), tenant=tenant, subclause__regulation__version__source__tenant=tenant)
+                if membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+                    raise PermissionDenied("Only an owner or compliance lead can withdraw evidence.")
+                item.withdrawn_at, item.withdrawn_by = timezone.now(), request.user
+                item.save(update_fields=["withdrawn_at", "withdrawn_by"])
+                AuditEvent.objects.create(tenant=tenant, actor=request.user, action="clause_evidence.withdrawn", object_type="ClauseEvidence", object_id=str(item.id), metadata={})
+                messages.success(request, "Evidence withdrawn from active assessment; its audit history is retained.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
