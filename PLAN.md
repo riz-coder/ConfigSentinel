@@ -87,7 +87,8 @@ retention/legal-hold guards, and custody history.
   passed; 4 PostgreSQL-only security tests were explicitly skipped locally.
 - Migration drift, Django system/deployment checks, Compose/CI YAML parsing,
   dependency consistency, and Git whitespace checks passed.
-- PostgreSQL RLS/trigger results are pending the GitHub Actions run below.
+- GitHub Actions run `39373074878` passed, including PostgreSQL RLS and
+  immutable-trigger boundary tests.
 
 ### Not implemented / known risks
 
