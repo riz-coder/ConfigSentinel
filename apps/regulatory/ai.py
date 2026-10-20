@@ -33,7 +33,7 @@ def analyze_clause(*, clause_text, evidence_texts):
         "clause": redact(clause_text), "evidence": [redact(item) for item in evidence_texts],
         "output_json": {"status": "one allowed status", "summary": "brief", "matched": ["source-supported point"], "gaps": ["missing proof"], "next_evidence": ["specific requested proof"]},
     }
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     request = Request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}", data=json.dumps({"contents": [{"parts": [{"text": json.dumps(prompt)}]}], "generationConfig": {"responseMimeType": "application/json", "temperature": 0}}).encode(), headers={"Content-Type": "application/json"})
     try:
         with urlopen(request, timeout=30) as response:

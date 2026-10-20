@@ -192,7 +192,7 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
                 continue
     result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_texts=text_items)
     return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
-        evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), created_by=actor)
+        evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), created_by=actor)
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 PACK_SCHEMA = {
