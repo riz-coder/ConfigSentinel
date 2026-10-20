@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import zipfile
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -182,6 +183,13 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
             text_items.append(raw.decode("utf-8", errors="replace"))
         elif item.original_filename.lower().endswith(".pdf"):
             text_items.append("\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(raw)).pages))
+        elif item.original_filename.lower().endswith(".docx"):
+            try:
+                with zipfile.ZipFile(BytesIO(raw)) as archive:
+                    xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+                text_items.append(re.sub(r"<[^>]+>", " ", xml).replace("&amp;", "&"))
+            except (KeyError, zipfile.BadZipFile):
+                continue
     result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_texts=text_items)
     return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
         evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"), created_by=actor)
