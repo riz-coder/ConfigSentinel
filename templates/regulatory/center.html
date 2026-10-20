@@ -8,7 +8,7 @@
 <details><summary>What the source says</summary><pre style="white-space:pre-wrap;max-height:18rem;overflow:auto">{{ regulation.source_excerpt }}</pre></details>
 {% for clause in regulation.subclauses.all %}<h4>Evidence files</h4><div class="grid">
 {% for item in clause.active_evidence %}<div class="card"><strong>{{ item.original_filename }}</strong><br><small>{{ item.size_bytes }} bytes · {{ item.status }}</small><form method="post">{% csrf_token %}<input type="hidden" name="operation" value="withdraw_evidence"><input type="hidden" name="evidence" value="{{ item.id }}"><button>Withdraw</button></form></div>{% empty %}<p>No active evidence submitted.</p>{% endfor %}</div>
-{% if clause.ai_analyses.all %}{% with finding=clause.ai_analyses.all.0 %}
+{% if clause.active_evidence and clause.ai_analyses.all %}{% with finding=clause.ai_analyses.all.0 %}
 <div class="card" style="border-left:4px solid #e6a400;margin:.8rem 0"><h4>AI preliminary status: {{ finding.status }}</h4><p>{{ finding.result.summary }}</p>
 {% if finding.result.matched %}<strong style="color:#087a43">Provided / matched</strong><ul style="color:#087a43">{% for point in finding.result.matched %}<li>{{ point }}</li>{% endfor %}</ul>{% endif %}
 {% if finding.result.gaps %}<strong style="color:#bd2430">Missing / gaps</strong><ul style="color:#bd2430">{% for gap in finding.result.gaps %}<li>{{ gap }}</li>{% endfor %}</ul>{% endif %}
