@@ -11,6 +11,7 @@ from apps.tenancy.models import Membership, Tenant
 from .models import LegalSourceStatus, Regulation, SourceDocument
 from .services import extract_source_regulations, upload_source_pdf
 from apps.evidence.vault import LocalEncryptedObjectStore
+from .ai import deterministic_assessment
 
 
 class SourcePdfIntakeTests(TestCase):
@@ -55,3 +56,11 @@ class SourcePdfIntakeTests(TestCase):
         self.assertEqual(first.legal_status, LegalSourceStatus.SOURCE_PENDING)
         self.assertIn("Source requirement one", first.source_excerpt)
         self.assertFalse(first.subclauses.get().obligations.exists())
+
+    def test_local_assessment_finds_missing_named_roles(self):
+        result = deterministic_assessment(
+            "(a) Chief Executive Officer: accountable. (b) Chief Information Security Officer: responsible.",
+            ["This incident policy assigns duties to all employees."],
+        )
+        self.assertEqual(result["status"], "NON_COMPLIANT")
+        self.assertEqual(len(result["gaps"]), 2)
