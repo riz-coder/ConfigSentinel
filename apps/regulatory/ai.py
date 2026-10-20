@@ -51,13 +51,19 @@ def _source_requirement_topics(clause_text):
 def _document_requirement_assessment(clause_text, documents):
     lower_clause = clause_text.lower()
     kinds = [kind for kind in ("policy", "procedure", "plan", "programme", "program", "framework", "sop") if re.search(rf"\b{kind}(?:s)?\b", lower_clause)]
+    if "business impact analysis" in lower_clause or re.search(r"\bBIA\b", clause_text):
+        kinds.append("business impact analysis")
     if not kinds:
         return None
     readable = [doc for doc in documents if len(doc.get("text", "").strip()) >= 40]
     candidates = []
     for doc in readable:
         identity = f"{doc.get('filename', '')} {doc.get('text', '')[:1500]}".lower()
-        if any(re.search(rf"\b{re.escape(kind)}(?:s)?\b", identity) for kind in kinds):
+        if any(
+            (kind == "business impact analysis" and ("business impact analysis" in identity or re.search(r"\bbia\b", identity)))
+            or (kind != "business impact analysis" and re.search(rf"\b{re.escape(kind)}(?:s)?\b", identity))
+            for kind in kinds
+        ):
             candidates.append(doc)
     required_label = "/".join(kinds)
     topics = _source_requirement_topics(clause_text)
@@ -157,7 +163,8 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
         else:
             gaps.append(f"Evidence does not show the source deadline value ({deadline}) with an hours/days unit.")
             checks.append({"requirement": f"Deadline {deadline}", "status": "MISSING"})
-    if any(term in lower_clause for term in ("annually", "annual", "once a year", "every year")) and not re.search(r"\b(?:20\d{2}|annual(?:ly)?|yearly)\b", lower_evidence):
+    annual_proof = re.search(r"\b(?:annual(?:ly)?|yearly|once\s+(?:each\s+)?year|every\s+year|reviewed?\s+(?:at\s+least\s+)?annually)\b", lower_evidence)
+    if any(term in lower_clause for term in ("annually", "annual", "once a year", "every year")) and not annual_proof:
         gaps.append("Annual recurrence or dated yearly execution evidence was not found.")
         checks.append({"requirement": "Annual recurrence", "status": "MISSING"})
     elif any(term in lower_clause for term in ("annually", "annual", "once a year", "every year")):

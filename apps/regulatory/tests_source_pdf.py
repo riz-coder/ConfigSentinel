@@ -126,6 +126,21 @@ class SourcePdfIntakeTests(TestCase):
         self.assertTrue(all(item["status"] == "PRESENT" for item in assessment["governance"]))
         self.assertEqual(assessment["coverage"][0]["status"], "POTENTIALLY_COVERED")
 
+    def test_bia_requires_an_actual_bia_document_not_backup_screenshots(self):
+        result = deterministic_assessment(
+            "Each Licensee shall conduct and maintain a documented Business Impact Analysis (BIA) to identify:\n"
+            "(a) critical services and business processes;\n(b) detailed risk assessment;\n"
+            "(c) Recovery Time Objectives (RTOs) and Recovery Point Objectives (RPOs).\n"
+            "BIA shall be reviewed at least annually.",
+            evidence_documents=[{"filename": "BIA_SS1.jpeg", "text": "Scheduled backup task every day. SQL backup completed 2025."}],
+        )
+
+        assessment = result["document_requirement"]
+        self.assertEqual(assessment["required_type"], "business impact analysis")
+        self.assertEqual(assessment["status"], "MISSING")
+        self.assertTrue(any("Documented business impact analysis is missing" in gap for gap in result["gaps"]))
+        self.assertTrue(any(check["requirement"] == "Annual recurrence" and check["status"] == "MISSING" for check in result["requirement_checks"]))
+
     def test_withdraw_purges_ciphertext_and_keeps_only_tombstone(self):
         source, version = upload_source_pdf(
             tenant=self.tenant, actor=self.user, title="Source", version_label="v1",
