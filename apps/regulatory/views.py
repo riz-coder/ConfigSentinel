@@ -1,7 +1,10 @@
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import get_user_model
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import close_old_connections
 from django.shortcuts import get_object_or_404, redirect, render
+from threading import Thread
 
 from apps.tenancy.access import tenant_for_request
 
@@ -80,8 +83,21 @@ def regulatory_center(request):
                 messages.success(request, f"{len(uploads)} evidence file(s) encrypted and submitted for independent review.")
             elif operation == "analyze":
                 clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
-                analysis = analyze_clause_evidence(tenant=tenant, actor=request.user, subclause=clause)
-                messages.success(request, f"AI preliminary finding recorded: {analysis.status}.")
+                tenant_id, clause_id, actor_id = str(tenant.id), str(clause.id), request.user.id
+                def run_analysis():
+                    close_old_connections()
+                    try:
+                        queued_tenant = tenant.__class__.objects.get(pk=tenant_id)
+                        queued_clause = SubClause.objects.get(pk=clause_id)
+                        actor = get_user_model().objects.get(pk=actor_id)
+                        analyze_clause_evidence(tenant=queued_tenant, actor=actor, subclause=queued_clause)
+                    except Exception:
+                        # A failed external analysis never alters an existing finding.
+                        pass
+                    finally:
+                        close_old_connections()
+                Thread(target=run_analysis, daemon=True).start()
+                messages.success(request, "Evidence received. AI analysis is running in the background; refresh this card shortly for the updated finding.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
