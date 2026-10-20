@@ -7,7 +7,7 @@ from apps.tenancy.rls import set_rls_context
 
 
 class Command(BaseCommand):
-    help = "Create an explicitly unverified CTDISR workspace with 84 SOURCE_PENDING slots."
+    help = "Create an explicitly unverified framework workspace with 84 SOURCE_PENDING slots."
 
     def add_arguments(self, parser):
         parser.add_argument("tenant_slug")
@@ -22,7 +22,7 @@ class Command(BaseCommand):
 
         source, _ = RegulatorySource.objects.get_or_create(
             tenant=tenant,
-            title="PTA CTDISR 2025 — authenticated source required",
+            title="Framework source — authenticated copy required",
         )
         version, _ = RegulatoryVersion.objects.get_or_create(source=source, version_label="source-pending")
         created = 0

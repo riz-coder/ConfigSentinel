@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Regulatory packs · ConfigSentinel{% endblock %}
+{% block title %}Framework sources · {{ product_name }}{% endblock %}
 {% block content %}
 <p><a href="{% url 'dashboard' %}">← Dashboard</a></p>
-<h1>Regulatory pack center</h1>
+<h1>Framework source center</h1>
 <p><a href="{% url 'mapping-center' %}">Open control/test/evidence mappings →</a></p>
-<div class="warning"><strong>Legal integrity gate:</strong> an imported pack remains SOURCE_PENDING until two distinct authorized people complete legal and compliance approval. Coverage gaps never count as passes.</div>
+<div class="warning"><strong>Source integrity gate:</strong> an imported pack remains SOURCE_PENDING until two distinct authorized people complete legal and assurance approval. Coverage gaps never count as passes.</div>
 {% for message in messages %}<div class="card" style="margin-bottom:1rem">{{ message }}</div>{% endfor %}
 {% if can_import %}
 <div class="card">

@@ -5,7 +5,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -66,6 +66,9 @@ class RegulatoryIntegrityTests(TestCase):
         queryset = Regulation.objects.filter(version__source__tenant=self.tenant)
         self.assertEqual(queryset.count(), 84)
         self.assertEqual(queryset.exclude(legal_status=LegalSourceStatus.SOURCE_PENDING).count(), 0)
+        source_title = queryset.first().version.source.title.upper()
+        self.assertNotIn("PTA", source_title)
+        self.assertNotIn("CTDISR", source_title)
 
 
 class TenantIsolationApiTests(TestCase):
@@ -111,6 +114,16 @@ class TenantIsolationApiTests(TestCase):
         response = self.client.get("/api/v1/openapi/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("openapi", response.content.decode())
+
+    @override_settings(PRODUCT_NAME="Private Assurance Desk")
+    def test_customer_pages_use_configured_neutral_branding(self):
+        for path in ["/", "/regulatory/", "/regulatory/mappings/", "/accounts/login/"]:
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            content = response.content.decode().upper()
+            self.assertIn("PRIVATE ASSURANCE DESK", content)
+            self.assertNotIn("PTA", content)
+            self.assertNotIn("CTDISR", content)
 
 
 class RegulatoryPackWorkflowTests(TestCase):

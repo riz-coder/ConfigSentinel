@@ -18,6 +18,7 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 DEBUG = env_bool("CONFIGSENTINEL_DEBUG", True)
+PRODUCT_NAME = os.getenv("CONFIGSENTINEL_PRODUCT_NAME", "Assurance Workspace").strip() or "Assurance Workspace"
 SECRET_KEY = os.getenv("CONFIGSENTINEL_SECRET_KEY", "")
 if not SECRET_KEY:
     if DEBUG:
@@ -73,6 +74,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "configsentinel.context_processors.product_branding",
             ],
         },
     }
@@ -125,7 +127,7 @@ LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 OTP_LOGIN_URL = "mfa-verify"
-OTP_TOTP_ISSUER = os.getenv("CONFIGSENTINEL_TOTP_ISSUER", "ConfigSentinel")
+OTP_TOTP_ISSUER = os.getenv("CONFIGSENTINEL_TOTP_ISSUER", PRODUCT_NAME)
 
 AUTHENTICATION_BACKENDS = [
     "axes.backends.AxesStandaloneBackend",

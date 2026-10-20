@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}ConfigSentinel{% endblock %}</title>
+  <title>{% block title %}{{ product_name }}{% endblock %}</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background:#09111f; color:#e8eef7; }
     body { margin:0; } header { border-bottom:1px solid #26334a; padding:1rem 2rem; display:flex; justify-content:space-between; }
@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-  <header><strong>ConfigSentinel Compliance OS</strong>{% if user.is_authenticated %}<span>{{ user.username }} · <form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button type="submit" style="border:0;background:none;color:#7dd3fc;padding:0;cursor:pointer">Sign out</button></form></span>{% endif %}</header>
+  <header><strong>{{ product_name }}</strong>{% if user.is_authenticated %}<span>{{ user.username }} · <form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button type="submit" style="border:0;background:none;color:#7dd3fc;padding:0;cursor:pointer">Sign out</button></form></span>{% endif %}</header>
   <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

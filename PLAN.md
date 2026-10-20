@@ -2,40 +2,34 @@
 
 ## Current work package
 
-`WP-REG-02` — versioned control, test, and evidence-requirement mappings with
-maker-checker approval and immutable history.
+`WP-CORE-03` — privacy-safe product presentation and neutral customer-facing
+framework terminology.
 
 ## In scope
 
-- Add tenant-scoped, versioned control definitions, test procedures, and
-  evidence requirements without storing evidence artifacts yet.
-- Map a verified obligation to an exact control/test/evidence version.
-- Require submission plus independent legal and compliance approvals for every
-  mapping; the author cannot approve their own mapping.
-- Make finalized mappings and review decisions append-only and auditable.
-- Update coverage gates to count only approved exact mappings.
-- Add migrations, forced RLS, role-aware API/UI, negative tests, and docs.
+- Replace authority-specific customer-facing branding with neutral assurance
+  and framework terminology.
+- Make the displayed product name configurable for private deployments.
+- Neutralize the seeded placeholder source title, including existing databases.
+- Add regression tests preventing authority-specific text in rendered pages.
+- Document the confidentiality boundary between private runtime data and the
+  currently public source repository.
 
 ## Explicitly out of scope
 
-- Evidence artifact upload, encrypted object storage, retention enforcement, or
-  legal holds (`WP-EVID`).
-- Control implementation/assessment, device collection, rules, and scoring.
-- Full CTDISR transcription, applicability decisions, and legal interpretation.
-- Regulatory submission, auditor certification, AI processing, and billing.
+- Repository visibility/history rewrite or deletion of project documentation.
+- Evidence ingestion, device access, clause assessment, or scoring.
+- Changes to legal source identifiers stored from authenticated imports.
+- Claims that UI wording alone makes a public repository confidential.
 
 ## Acceptance tests
 
-1. Only verified obligations can receive a submitted mapping.
-2. Mapping references must belong to one tenant and an internally consistent
-   control → test → evidence chain.
-3. The author cannot approve; legal and compliance approvals require distinct,
-   authorized people and both are required for finalization.
-4. Approved mappings/reviews cannot be edited or deleted; corrections create a
-   new version/mapping while old audit history remains.
-5. Coverage remains incomplete for draft/rejected/partially reviewed mappings.
-6. Cross-tenant reads/writes/reviews are denied and audited where attempted.
-7. SQLite and PostgreSQL CI suites, migrations, and production checks pass.
+1. Rendered login/dashboard/framework/MFA pages contain no `PTA` or `CTDISR`.
+2. Branding can be changed with configuration without code edits.
+3. Existing exact placeholder titles are migrated to neutral wording without
+   altering authenticated imported legal sources.
+4. Internal legal/audit semantics and source integrity gates remain unchanged.
+5. Tests, migration checks, and production checks pass.
 
 ## Dependencies
 
@@ -56,34 +50,28 @@ maker-checker approval and immutable history.
 
 ## Security threats addressed in this package
 
-- Cross-tenant mapping, IDOR, inconsistent references, self-approval, role
-  escalation, historic mutation, duplicate active mapping, and false coverage.
+- Accidental authority affiliation, sensitive project-purpose disclosure in the
+  UI, destructive rewriting of genuine source metadata, and false privacy claims.
 
 ## Completion record
 
 ### Implemented
 
-- Tenant-scoped, uniquely versioned control definitions, test procedures, and
-  evidence requirements linked as an exact validated chain.
-- Verified-obligation mapping submission with author separation, independent
-  legal/compliance decisions, finalization, and audit events.
-- Conservative coverage calculation that ignores draft, rejected, partially
-  reviewed, legacy free-text, and legally unverified mappings.
-- Append-only finalized mappings/reviews and referenced catalogue protection at
-  the Django boundary and with PostgreSQL triggers.
-- Role-aware REST endpoints and browser workflow for authoring, reviewing, and
-  inspecting mappings without implying evidence acceptance.
-- Forced PostgreSQL RLS for all new direct and inherited tenant tables, an ADR,
-  and an explicit current mapping-coverage statement.
+- Configurable `Assurance Workspace` product branding for browser pages, API
+  schema, and authenticator issuer without authority-specific affiliation.
+- Neutral framework/source terminology on dashboard, source center, mappings,
+  login, and MFA pages.
+- A narrow data migration that renames only the known empty placeholder source;
+  authenticated imported source metadata remains unchanged.
+- Neutral seed output and regression assertions preventing `PTA` or `CTDISR`
+  from appearing in rendered customer pages.
 
 ### Test evidence
 
-- `.venv\\Scripts\\python.exe manage.py test --verbosity 1` — 37 tests passed on
+- `.venv\\Scripts\\python.exe manage.py test --verbosity 1` — 38 tests passed on
   SQLite, with 4 PostgreSQL-only boundary tests explicitly skipped locally.
 - `.venv\\Scripts\\python.exe manage.py makemigrations --check --dry-run` — no
   changes detected.
-- GitHub Actions run `39248327450` — SQLite and PostgreSQL 17 jobs passed; the
-  PostgreSQL job exercised mapping-table RLS and finalized-record triggers.
 - Production-shaped `manage.py check --deploy` with debug disabled, strong
   secret, allowed host, trusted origin, and HTTPS settings — no issues.
 - PowerShell backup/restore scripts parsed successfully; Compose and CI YAML
@@ -91,14 +79,13 @@ maker-checker approval and immutable history.
 
 ### Not implemented / known risks
 
-- PostgreSQL RLS/trigger validation is delegated to CI because local
-  Docker/PostgreSQL tools are unavailable.
-- This package specifies expected evidence but does not upload, encrypt, retain,
-  validate, or accept an actual artifact.
-- It does not assess applicability, control implementation, test execution,
-  operating effectiveness, audit opinion, or customer compliance.
-- No authenticated Gazette was supplied; no production clause mapping has been
-  populated and no regulatory coverage claim is made.
+- The GitHub repository is currently public and contains project blueprint,
+  documentation, and immutable Git history with authority-specific context.
+  Neutral runtime branding does not make that repository confidential.
+- Changing repository visibility or rewriting published history requires an
+  explicit owner decision and separate credential/secret exposure review.
+- The full document/device assessment workflow remains unimplemented; current
+  capabilities are the security, legal-source, and mapping foundation only.
 
 ### Next bounded work package
 
