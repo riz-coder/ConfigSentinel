@@ -18,6 +18,13 @@ workflow and operational dashboard.
 - Security threat: keyword stuffing must not convert an unsupported document
   into accepted evidence or a verified compliance result.
 
+Implementation status: local structured proof checks now require action-linked
+roles/items and separately flag recurrence, approval/signature, unreadable or
+image-only evidence, and suspicious repetition. Gemini remains disabled.
+Withdrawal now purges the encrypted blob and wrapped key material, removes the
+file from active UI/context, retains a minimal audit tombstone, and recalculates
+the preliminary finding from the remaining active evidence.
+
 ## In scope
 
 - Add an encrypted official-source PDF intake path, a human-reviewed clause

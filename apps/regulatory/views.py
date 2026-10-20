@@ -19,7 +19,7 @@ from .models import (
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
 )
-from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf
+from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
 
 
 @login_required
@@ -137,12 +137,10 @@ def regulatory_center(request):
                 messages.success(request, "Evidence received. AI analysis is running in the background; refresh this card shortly for the updated finding.")
             elif operation == "withdraw_evidence":
                 item = get_object_or_404(ClauseEvidence, pk=request.POST.get("evidence"), tenant=tenant, subclause__regulation__version__source__tenant=tenant)
-                if membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
-                    raise PermissionDenied("Only an owner or compliance lead can withdraw evidence.")
-                item.withdrawn_at, item.withdrawn_by = timezone.now(), request.user
-                item.save(update_fields=["withdrawn_at", "withdrawn_by"])
-                AuditEvent.objects.create(tenant=tenant, actor=request.user, action="clause_evidence.withdrawn", object_type="ClauseEvidence", object_id=str(item.id), metadata={})
-                messages.success(request, "Evidence withdrawn from active assessment; its audit history is retained.")
+                clause = item.subclause
+                withdraw_clause_evidence(tenant=tenant, actor=request.user, artifact=item)
+                analyze_clause_evidence(tenant=tenant, actor=request.user, subclause=clause)
+                messages.success(request, "Evidence file removed and its content excluded. The preliminary finding was recalculated from active evidence only.")
             elif operation == "clause":
                 if membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
                     raise PermissionDenied("Your role cannot register source clauses.")
@@ -175,6 +173,9 @@ def regulatory_center(request):
     for version in versions:
         version.coverage = coverage_report(version)
         version.clause_cards = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence", "subclauses__ai_analyses"))
+        for regulation in version.clause_cards:
+            for clause in regulation.subclauses.all():
+                clause.active_evidence = [item for item in clause.submitted_evidence.all() if item.withdrawn_at is None]
     return render(request, "regulatory/center.html", {
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),

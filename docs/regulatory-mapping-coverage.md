@@ -27,3 +27,12 @@ only explicit synthetic text.
 
 Those states remain separate future workflows and must not be inferred from an
 approved design mapping.
+
+## Preliminary local evidence checks
+
+The local evidence engine performs non-authoritative triage of readable active
+files. It checks action-linked roles/items, recurrence/date indicators,
+approval/signature indicators, readability, embedded-image limitations and
+repetitive-text risk. A keyword occurrence alone is not proof. These results do
+not authenticate a document, accept evidence, verify a legal mapping or issue a
+legal compliance conclusion; those decisions remain human workflows.

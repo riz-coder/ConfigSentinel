@@ -176,23 +176,61 @@ def analyze_clause_evidence(*, tenant, actor, subclause):
     if subclause.regulation.version.source.tenant_id != tenant.id:
         raise PermissionDenied("Clause is not available in this tenant.")
     evidence = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=subclause, withdrawn_at__isnull=True))
-    text_items = []
+    documents = []
     for item in evidence:
         raw = LocalEncryptedObjectStore().retrieve_and_verify(item)
+        text = ""
+        embedded_images = 0
         if item.original_filename.lower().endswith((".txt", ".csv")):
-            text_items.append(raw.decode("utf-8", errors="replace"))
+            text = raw.decode("utf-8", errors="replace")
         elif item.original_filename.lower().endswith(".pdf"):
-            text_items.append("\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(raw)).pages))
+            text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(raw)).pages)
         elif item.original_filename.lower().endswith(".docx"):
             try:
                 with zipfile.ZipFile(BytesIO(raw)) as archive:
                     xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
-                text_items.append(re.sub(r"<[^>]+>", " ", xml).replace("&amp;", "&"))
+                    embedded_images = len([name for name in archive.namelist() if name.startswith("word/media/")])
+                text = re.sub(r"<[^>]+>", " ", xml).replace("&amp;", "&")
             except (KeyError, zipfile.BadZipFile):
-                continue
-    result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_texts=text_items)
+                pass
+        elif item.original_filename.lower().endswith(".xlsx"):
+            try:
+                with zipfile.ZipFile(BytesIO(raw)) as archive:
+                    parts = []
+                    for name in archive.namelist():
+                        if name == "xl/sharedStrings.xml" or name.startswith("xl/worksheets/sheet"):
+                            parts.append(re.sub(r"<[^>]+>", " ", archive.read(name).decode("utf-8", errors="replace")))
+                    text = " ".join(parts)
+            except zipfile.BadZipFile:
+                pass
+        documents.append({"filename": item.original_filename, "text": text, "embedded_images": embedded_images, "size_bytes": item.size_bytes})
+    result = analyze_clause(clause_text=subclause.regulation.source_excerpt, evidence_documents=documents)
     return ClauseAIAnalysis.objects.create(subclause=subclause, status=result["status"], result=result,
-        evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), created_by=actor)
+        evidence_hashes=[item.plaintext_sha256 for item in evidence], model_name=result.get("engine", "LOCAL_RULES_V2"), created_by=actor)
+
+
+@transaction.atomic
+def withdraw_clause_evidence(*, tenant, actor, artifact):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+        raise PermissionDenied("Only an owner or compliance lead can withdraw evidence.")
+    if artifact.tenant_id != tenant.id or artifact.withdrawn_at is not None:
+        raise ValidationError("Evidence is unavailable or already withdrawn.")
+    LocalEncryptedObjectStore().purge(artifact.storage_key)
+    now = timezone.now()
+    artifact.withdrawn_at = now
+    artifact.withdrawn_by = actor
+    artifact.purged_at = now
+    artifact.wrapped_dek = ""
+    artifact.wrap_nonce = ""
+    artifact.content_nonce = ""
+    artifact.save(update_fields=["withdrawn_at", "withdrawn_by", "purged_at", "wrapped_dek", "wrap_nonce", "content_nonce"])
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="clause_evidence.withdrawn_and_purged",
+        object_type="ClauseEvidence", object_id=str(artifact.id),
+        metadata={"plaintext_sha256": artifact.plaintext_sha256},
+    )
+    return artifact
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 PACK_SCHEMA = {

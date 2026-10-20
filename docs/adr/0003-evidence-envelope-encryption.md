@@ -35,3 +35,9 @@ checks and external custody verification without replacing AEAD authentication.
 - Uploads are bounded and kept in memory so plaintext is not spooled to disk.
 - Uploaded content remains untrusted and opaque; malware scanning/CDR is not
   implemented in this package, so downloads are forced attachments.
+- Clause-evidence withdrawal is a governed crypto-purge: remove the encrypted
+  object, clear wrapped-key and nonce material, record `purged_at`, and retain
+  only the filename/hash/actor/time tombstone needed for audit traceability.
+  Withdrawn artifacts are excluded from every future assessment and customer
+  evidence list. Historical assessment records remain immutable snapshots; a
+  fresh active assessment supersedes them in the operational UI.

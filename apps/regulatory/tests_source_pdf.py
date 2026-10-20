@@ -8,8 +8,8 @@ from django.test import TestCase
 
 from apps.tenancy.models import Membership, Tenant
 
-from .models import LegalSourceStatus, Regulation, SourceDocument
-from .services import extract_source_regulations, upload_source_pdf
+from .models import ClauseEvidence, LegalSourceStatus, Regulation, SourceDocument, SubClause
+from .services import extract_source_regulations, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .ai import analyze_clause, deterministic_assessment
 
@@ -21,7 +21,7 @@ class SourcePdfIntakeTests(TestCase):
         self.override.enable()
         self.user = get_user_model().objects.create_user(username="source-uploader")
         self.tenant = Tenant.objects.create(name="Source tenant", slug="source-tenant")
-        Membership.objects.create(user=self.user, tenant=self.tenant, role=Membership.Role.LEGAL_REVIEWER)
+        Membership.objects.create(user=self.user, tenant=self.tenant, role=Membership.Role.OWNER)
 
     def tearDown(self):
         self.override.disable(); self.temp.cleanup()
@@ -71,5 +71,45 @@ class SourcePdfIntakeTests(TestCase):
         result = analyze_clause(clause_text="Annual approved training is required.", evidence_texts=["training"])
 
         mocked_urlopen.assert_not_called()
-        self.assertEqual(result["engine"], "LOCAL_RULES")
+        self.assertEqual(result["engine"], "LOCAL_RULES_V2")
         self.assertIn("paused", result["summary"].lower())
+
+    def test_keywords_without_action_linkage_do_not_prove_named_roles(self):
+        result = deterministic_assessment(
+            "Chief Information Security Officer: shall approve the programme.",
+            ["Chief Information Security Officer programme security policy words copied here."],
+        )
+
+        self.assertNotEqual(result["status"], "COMPLIANT")
+        self.assertTrue(any("action-linked" in gap for gap in result["gaps"]))
+
+    def test_image_only_document_remains_insufficient(self):
+        result = deterministic_assessment(
+            "Annual security awareness training shall be conducted.",
+            evidence_documents=[{"filename": "photos.docx", "text": "", "embedded_images": 4}],
+        )
+
+        self.assertEqual(result["status"], "INSUFFICIENT_EVIDENCE")
+        self.assertTrue(any("manual visual review" in gap for gap in result["gaps"]))
+
+    def test_withdraw_purges_ciphertext_and_keeps_only_tombstone(self):
+        source, version = upload_source_pdf(
+            tenant=self.tenant, actor=self.user, title="Source", version_label="v1",
+            filename="source.pdf", content=b"%PDF-1.4 source",
+        )
+        regulation = Regulation.objects.create(version=version, number=1)
+        clause = SubClause.objects.create(regulation=regulation, clause_path="1", title="Clause", source_page="1")
+        artifact = upload_clause_evidence(
+            tenant=self.tenant, actor=self.user, subclause=clause, title="Evidence",
+            filename="evidence.txt", content=b"Approved responsibility record dated 2026.",
+        )
+        stored_path = Path(self.temp.name) / artifact.storage_key
+        self.assertTrue(stored_path.exists())
+
+        withdraw_clause_evidence(tenant=self.tenant, actor=self.user, artifact=artifact)
+        artifact.refresh_from_db()
+
+        self.assertFalse(stored_path.exists())
+        self.assertIsNotNone(artifact.purged_at)
+        self.assertEqual(artifact.wrapped_dek, "")
+        self.assertFalse(ClauseEvidence.objects.filter(pk=artifact.pk, withdrawn_at__isnull=True).exists())
