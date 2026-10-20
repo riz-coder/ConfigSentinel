@@ -130,6 +130,42 @@ def _supporting_evidence_assessment(documents, controlled_documents):
     return results
 
 
+def preliminary_evidence_coverage(result):
+    """Evidence completeness indicator only; never a legal-compliance score."""
+    existing = result.get("preliminary_evidence_coverage")
+    if existing:
+        return existing
+    document = result.get("document_requirement")
+    if document and document.get("status") == "MISSING":
+        has_support = any(item.get("supports") for item in document.get("supporting_evidence", []))
+        # Narrow operational proof can be visible, but cannot compensate for a
+        # missing policy/plan/BIA or turn it into a meaningful clause score.
+        percent = 10 if has_support else 0
+        return {"percent": percent, "basis": "Limited supporting operational evidence; the required controlled document is missing."}
+
+    values = []
+    weights = {
+        "PROVEN": 1.0, "PRESENT": 0.75, "PRESENT_UNVERIFIED": 0.6,
+        "POTENTIALLY_COVERED": 0.5, "PARTIAL": 0.5,
+        "MISSING": 0.0, "UNREADABLE": 0.0, "CONTRADICTED": 0.0,
+    }
+    for check in result.get("requirement_checks", []):
+        if check.get("status") in weights:
+            values.append(weights[check["status"]])
+    if document:
+        for check in document.get("governance", []) + document.get("coverage", []):
+            if check.get("status") in weights:
+                values.append(weights[check["status"]])
+    if values:
+        percent = round(sum(values) / len(values) * 100)
+        return {"percent": percent, "basis": "Weighted preliminary coverage across the identified evidence requirements."}
+
+    matched, gaps = len(result.get("matched", [])), len(result.get("gaps", []))
+    total = matched + gaps
+    percent = round((matched / total) * 100) if total else 0
+    return {"percent": percent, "basis": "Preliminary coverage calculated from the recorded matched and missing evidence points."}
+
+
 def redact(text):
     for pattern, replacement in REDACTIONS:
         text = pattern.sub(replacement, text)
@@ -241,7 +277,9 @@ def deterministic_assessment(clause_text, evidence_texts=None, evidence_document
         }
         for doc in documents
     ]
-    return {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_requirement": document_requirement, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
+    result = {"status": status, "summary": "Structured local proof checks completed against active evidence; keywords alone do not count as proof.", "matched": matched, "gaps": gaps, "next_evidence": gaps, "requirement_checks": checks, "document_requirement": document_requirement, "document_observations": observations, "engine": "LOCAL_RULES_V2"}
+    result["preliminary_evidence_coverage"] = preliminary_evidence_coverage(result)
+    return result
 
 
 def analyze_clause(*, clause_text, evidence_texts=None, evidence_documents=None):

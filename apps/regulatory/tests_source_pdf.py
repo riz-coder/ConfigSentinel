@@ -144,6 +144,7 @@ class SourcePdfIntakeTests(TestCase):
         self.assertEqual(support["classification"], "SUPPORTING_OPERATIONAL_EVIDENCE")
         self.assertIn("Backup/recovery activity", support["supports"])
         self.assertIn("does not replace", support["limitation"])
+        self.assertEqual(result["preliminary_evidence_coverage"]["percent"], 10)
 
     def test_withdraw_purges_ciphertext_and_keeps_only_tombstone(self):
         source, version = upload_source_pdf(

@@ -48,3 +48,8 @@ Screenshots, logs and other operational artifacts are presented separately as
 supporting evidence. They can corroborate a specific operational signal (for
 example, backup/recovery activity) but cannot stand in for a required controlled
 document such as a policy, procedure, BIA or plan.
+
+The displayed preliminary evidence-coverage percentage is a transparent
+completeness indicator, not a compliance score or legal conclusion. When a
+required controlled document is missing, supporting operational artifacts are
+capped at 10% so they cannot inflate the assessment.

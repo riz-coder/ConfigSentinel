@@ -36,6 +36,10 @@ keyword presence alone.
 Operational screenshots/logs are classified separately as supporting evidence.
 They may corroborate a narrow operational activity but never replace a required
 controlled policy, plan, BIA, SOP or procedure.
+Each preliminary finding now includes an evidence-coverage percentage with a
+visible non-legal disclaimer. If a required controlled document is missing,
+supporting screenshots/logs are capped at 10% coverage rather than inflating
+the result.
 
 ## In scope
 

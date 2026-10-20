@@ -20,6 +20,7 @@ from .models import (
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
 )
 from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
+from .ai import preliminary_evidence_coverage
 
 
 @login_required
@@ -176,6 +177,9 @@ def regulatory_center(request):
         for regulation in version.clause_cards:
             for clause in regulation.subclauses.all():
                 clause.active_evidence = [item for item in clause.submitted_evidence.all() if item.withdrawn_at is None]
+                for analysis in clause.ai_analyses.all():
+                    # Render a non-persistent fallback for legacy immutable findings.
+                    analysis.display_coverage = preliminary_evidence_coverage(analysis.result)
     return render(request, "regulatory/center.html", {
         "tenant": tenant, "membership": membership, "versions": versions,
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),
