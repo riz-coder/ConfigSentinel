@@ -2,6 +2,7 @@
 {% block content %}
 <h1>{{ tenant.name }}</h1>
 <p><a href="{% url 'regulatory-center' %}">Open framework source center →</a></p>
+<p><a href="{% url 'evidence-center' %}">Open encrypted evidence vault →</a></p>
 <div class="warning"><strong>Legal integrity gate:</strong> SOURCE_PENDING is not compliant, mapped, or implemented. No verified legal conclusion is available without an authenticated source and authorized review.</div>
 <div class="grid">
   <div class="card"><div>Framework sources</div><div class="value">{{ source_count }}</div></div>

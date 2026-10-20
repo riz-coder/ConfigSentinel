@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       CONFIGSENTINEL_DATABASE_URL: postgresql://configsentinel_runtime:${CONFIGSENTINEL_DB_RUNTIME_PASSWORD:-local-runtime-only}@db:5432/configsentinel
+      CONFIGSENTINEL_EVIDENCE_STORAGE_ROOT: /var/lib/configsentinel/evidence
     expose:
       - "8000"
     healthcheck:
@@ -15,6 +16,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - evidence_data:/var/lib/configsentinel/evidence
   migrate:
     build: .
     command: python manage.py migrate --noinput
@@ -43,4 +46,5 @@ services:
 
 volumes:
   postgres_data:
+  evidence_data:
 

@@ -4,6 +4,7 @@ from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from apps.auditlog.models import AuditEvent
+from apps.evidence.models import CustodyEvent, EvidenceArtifact
 import base64
 
 from apps.regulatory.models import (
@@ -73,9 +74,22 @@ class PostgreSQLBoundaryTests(TransactionTestCase):
             ObligationControlMapping.objects.filter(pk=mapping.pk).update(status=ObligationControlMapping.Status.APPROVED, finalized_at=now)
             with self.assertRaises(DatabaseError), transaction.atomic():
                 ObligationControlMapping.objects.filter(pk=mapping.pk).update(rationale="tampered")
+            mapping.refresh_from_db()
+            artifact = EvidenceArtifact.objects.create(
+                tenant=alpha, mapping=mapping, requirement=requirement, title="DB evidence", original_filename="db.txt",
+                media_type="text/plain", size_bytes=2, plaintext_sha256="a" * 64, ciphertext_sha256="b" * 64,
+                storage_key="objects/db/db.blob", wrapped_dek="wrapped", wrap_nonce="nonce",
+                content_nonce="nonce", uploaded_by=user,
+            )
+            event = CustodyEvent.objects.create(artifact=artifact, actor=user, kind=CustodyEvent.Kind.UPLOADED)
+            with self.assertRaises(DatabaseError), transaction.atomic():
+                EvidenceArtifact.objects.filter(pk=artifact.pk).update(title="tampered")
+            with self.assertRaises(DatabaseError), transaction.atomic():
+                CustodyEvent.objects.filter(pk=event.pk).update(kind=CustodyEvent.Kind.DOWNLOADED)
             set_rls_context(user_id=user.pk, tenant_id=beta.pk)
             self.assertFalse(ControlDefinition.objects.filter(pk=control.pk).exists())
             self.assertFalse(ObligationControlMapping.objects.filter(pk=mapping.pk).exists())
+            self.assertFalse(EvidenceArtifact.objects.filter(pk=artifact.pk).exists())
 
     @skipUnlessDBFeature("supports_transactions")
     def test_database_trigger_rejects_raw_audit_mutation(self):

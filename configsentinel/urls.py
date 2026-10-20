@@ -12,6 +12,8 @@ from apps.regulatory.api import (
     TestProcedureViewSet, TrustedSigningKeyViewSet,
 )
 from apps.regulatory.views import dashboard, mapping_center, regulatory_center
+from apps.evidence.api import EvidenceArtifactViewSet
+from apps.evidence.views import evidence_center, evidence_download
 from apps.security.views import MFASetupView, MFAVerifyView
 
 router = DefaultRouter()
@@ -23,6 +25,7 @@ router.register("controls", ControlDefinitionViewSet, basename="control")
 router.register("test-procedures", TestProcedureViewSet, basename="test-procedure")
 router.register("evidence-requirements", EvidenceRequirementViewSet, basename="evidence-requirement")
 router.register("obligation-mappings", ObligationControlMappingViewSet, basename="obligation-mapping")
+router.register("evidence", EvidenceArtifactViewSet, basename="evidence")
 
 urlpatterns = [
     path("health/", lambda request: JsonResponse({"status": "ok"}), name="health"),
@@ -35,6 +38,8 @@ urlpatterns = [
     path("api/v1/", include(router.urls)),
     path("regulatory/", regulatory_center, name="regulatory-center"),
     path("regulatory/mappings/", mapping_center, name="mapping-center"),
+    path("evidence/", evidence_center, name="evidence-center"),
+    path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
     path("", dashboard, name="dashboard"),
 ]
 

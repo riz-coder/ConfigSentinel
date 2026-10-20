@@ -10,6 +10,7 @@ __pycache__/
 htmlcov/
 staticfiles/
 media/
+evidence_objects/
 .idea/
 .vscode/
 ~$*.docx

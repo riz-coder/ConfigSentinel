@@ -5,6 +5,10 @@
 Tenant identities, regulatory sources and review metadata, audit records,
 future device/evidence references, credentials, and exported reports.
 
+WP-EVID-01 additionally protects plaintext evidence, per-artifact data keys,
+the wrapping key, immutable manifests, reviewer decisions, retention holds, and
+custody history.
+
 ## Trust boundaries
 
 Browser to reverse proxy; proxy to Django; Django to PostgreSQL; future worker
@@ -20,6 +24,12 @@ and collector links; administrator access; tenant-to-tenant boundary.
 - Production cookies, HSTS, HTTPS redirect, host allowlist, and proxy HTTPS
   awareness are configured when debug mode is disabled.
 - Database is not published by the Compose topology.
+- Evidence is AES-256-GCM envelope-encrypted before object storage with
+  tenant/artifact/version-bound AAD and dual plaintext/ciphertext hashes.
+- Plaintext uploads are memory-bounded and never intentionally spooled to disk;
+  downloads are opaque attachments with no-store caching.
+- Upload, review, download, hold, release, and purge are tenant/role scoped and
+  attributable; uploader self-review and early/held purge fail closed.
 - `.env`, local databases, media, and virtual environments are Git-ignored.
 
 ## Open risks for later packages
@@ -34,4 +44,7 @@ and collector links; administrator access; tenant-to-tenant boundary.
   the application.
 - Docker deployment has not been executed because Docker is unavailable on the
   current workstation.
+- The local evidence adapter lacks malware scanning, production KMS, S3 object
+  versioning, HA, coordinated off-host backup, and proven key recovery. It must
+  not receive customer evidence until those deployment controls are reviewed.
 

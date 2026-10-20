@@ -42,6 +42,12 @@ requires independent legal and compliance approval, and its author cannot
 approve it. This is a design/coverage workflow only: it does not mean a control
 is implemented or that evidence has been accepted.
 
+The encrypted evidence vault is available at `/evidence/`. It accepts bounded
+allowlisted files only against approved mappings, encrypts them before storage,
+and requires an independent integrity-backed review. Configure a 32-byte base64
+master key before use; see `docs/evidence-vault-operations.md`. The bundled local
+storage adapter is not a hosted-production KMS/S3 backend.
+
 Privileged access requires authenticator-app MFA. After a successful password
 login, a user without a confirmed device is sent to the enrollment QR screen;
 subsequent sessions require a current TOTP code. Five repeated invalid login

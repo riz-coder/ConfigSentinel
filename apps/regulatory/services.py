@@ -5,7 +5,7 @@ import json
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -230,6 +230,8 @@ def review_version(*, version, reviewer, kind, decision, note=""):
 
 
 def coverage_report(version):
+    from apps.evidence.models import EvidenceArtifact, EvidenceStatus
+
     obligations = Obligation.objects.filter(subclause__regulation__version=version)
     issues = []
     if version.source.legal_status != LegalSourceStatus.VERIFIED:
@@ -247,6 +249,22 @@ def coverage_report(version):
         issues.append("TEST_PROCEDURE_MISSING")
     if unmapped.exists():
         issues.append("EVIDENCE_SPECIFICATION_MISSING")
+    approved_mapping_ids = ObligationControlMapping.objects.filter(
+        obligation__subclause__regulation__version=version,
+        status=ObligationControlMapping.Status.APPROVED,
+    ).values_list("id", flat=True)
+    accepted = EvidenceArtifact.objects.filter(
+        mapping_id__in=approved_mapping_ids, status=EvidenceStatus.ACCEPTED, purged_at__isnull=True,
+    )
+    current_accepted = accepted.filter(models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=timezone.now()))
+    mapped_obligation_ids = set(
+        ObligationControlMapping.objects.filter(id__in=approved_mapping_ids).values_list("obligation_id", flat=True)
+    )
+    evidenced_obligation_ids = set(current_accepted.values_list("mapping__obligation_id", flat=True))
+    if mapped_obligation_ids - evidenced_obligation_ids:
+        issues.append("EVIDENCE_MISSING_OR_UNACCEPTED")
+    if accepted.filter(expires_at__isnull=False, expires_at__lte=timezone.now()).exists():
+        issues.append("EVIDENCE_STALE")
     return {
         "ready": not issues, "issues": issues, "regulations": version.regulations.count(),
         "obligations": obligations.count(),

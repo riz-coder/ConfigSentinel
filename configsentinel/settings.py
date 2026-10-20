@@ -1,3 +1,5 @@
+import base64
+import binascii
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -46,6 +48,7 @@ INSTALLED_APPS = [
     "apps.tenancy",
     "apps.auditlog",
     "apps.regulatory",
+    "apps.evidence",
 ]
 
 MIDDLEWARE = [
@@ -118,6 +121,23 @@ USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+EVIDENCE_STORAGE_ROOT = Path(os.getenv("CONFIGSENTINEL_EVIDENCE_STORAGE_ROOT", BASE_DIR / "evidence_objects"))
+EVIDENCE_MASTER_KEY = os.getenv("CONFIGSENTINEL_EVIDENCE_MASTER_KEY", "")
+EVIDENCE_MAX_UPLOAD_BYTES = int(os.getenv("CONFIGSENTINEL_EVIDENCE_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+if not DEBUG and not EVIDENCE_MASTER_KEY:
+    raise ImproperlyConfigured("CONFIGSENTINEL_EVIDENCE_MASTER_KEY is required when DEBUG=false")
+if EVIDENCE_MASTER_KEY:
+    try:
+        decoded_evidence_key = base64.b64decode(EVIDENCE_MASTER_KEY, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ImproperlyConfigured("CONFIGSENTINEL_EVIDENCE_MASTER_KEY must be valid base64") from exc
+    if len(decoded_evidence_key) != 32:
+        raise ImproperlyConfigured("CONFIGSENTINEL_EVIDENCE_MASTER_KEY must decode to exactly 32 bytes")
+if EVIDENCE_MAX_UPLOAD_BYTES <= 0:
+    raise ImproperlyConfigured("CONFIGSENTINEL_EVIDENCE_MAX_UPLOAD_BYTES must be positive")
+FILE_UPLOAD_HANDLERS = ["django.core.files.uploadhandler.MemoryFileUploadHandler"]
+FILE_UPLOAD_MAX_MEMORY_SIZE = EVIDENCE_MAX_UPLOAD_BYTES + (1024 * 1024)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
