@@ -12,6 +12,10 @@ details, unknown enum values, duplicate identifiers, foreign users and unresolve
 roles are read-only. PostgreSQL row-level security provides a second tenant
 boundary below application filtering.
 
+CSV decoding accepts UTF-8, UTF-16/32, Windows-1252 and Latin-1 exports and
+detects comma, semicolon, tab or pipe delimiters. XLS/XLSX file signatures take
+precedence over a misleading `.csv` filename.
+
 Missing site/service assignments and overdue reviews remain visible coverage
 gaps. This package does not poll devices, infer legal applicability or produce
 a compliance result.

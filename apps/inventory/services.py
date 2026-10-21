@@ -52,18 +52,33 @@ def _field_map(headers):
 
 
 def _sheet_rows(*, filename, content):
+    if not content:
+        raise ValidationError("The inventory file is empty.")
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    # Trust the file signature over a misleading extension. Excel exports are
+    # commonly renamed to .csv without being converted to text.
+    if content.startswith(b"PK\x03\x04"):
+        extension = "xlsx"
+    elif content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        extension = "xls"
     if extension == "csv":
         text = None
-        for encoding in ("utf-8-sig", "utf-16", "cp1252"):
+        for encoding in ("utf-8-sig", "utf-32", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin-1"):
             try:
                 text = content.decode(encoding)
+                if "\x00" in text:
+                    text = None
+                    continue
                 break
             except UnicodeDecodeError:
                 continue
         if text is None:
-            raise ValidationError("CSV encoding is unsupported; save it as UTF-8, UTF-16 or Windows CSV.")
-        reader = csv.DictReader(io.StringIO(text))
+            raise ValidationError("The CSV text encoding could not be detected.")
+        try:
+            dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
         return reader.fieldnames or [], list(reader)
     if extension == "xlsx":
         from openpyxl import load_workbook

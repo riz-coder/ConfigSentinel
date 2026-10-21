@@ -47,9 +47,10 @@ class InventoryFoundationTests(TestCase):
             import_assets_csv(tenant=self.tenant, actor=self.owner, content=payload)
 
     def test_flexible_csv_headers_and_windows_encoding_are_mapped(self):
-        payload = "Inventory Code,Device Name,Category,Business Owner,Technical Custodian,Priority,Location\nRTR-01,Core Router,Router,asset-owner,asset-owner,Critical,KHI-01\n".encode("cp1252")
+        payload = "Inventory Code;Device Name;Category;Business Owner;Technical Custodian;Priority;Location\nRTR-01;Café Router;Router;asset-owner;asset-owner;Critical;KHI-01\n".encode("cp1252")
         self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="inventory.csv", content=payload), 1)
         asset = Asset.objects.get(asset_tag="RTR-01")
+        self.assertEqual(asset.name, "Café Router")
         self.assertEqual(asset.kind, Asset.Kind.NETWORK_DEVICE)
         self.assertEqual(asset.criticality, CriticalService.Criticality.CRITICAL)
 
@@ -62,6 +63,14 @@ class InventoryFoundationTests(TestCase):
         asset = Asset.objects.get(asset_tag="SRV-01")
         self.assertEqual(asset.kind, Asset.Kind.SERVER)
         self.assertTrue(asset.is_cii)
+
+    def test_excel_content_is_detected_when_file_has_csv_extension(self):
+        workbook = Workbook(); sheet = workbook.active
+        sheet.append(["Asset Code", "System Name", "Category", "Owner", "Custodian", "Priority"])
+        sheet.append(["APP-01", "Portal", "Application", "asset-owner", "asset-owner", "Medium"])
+        stream = BytesIO(); workbook.save(stream)
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="wrong.csv", content=stream.getvalue()), 1)
+        self.assertTrue(Asset.objects.filter(asset_tag="APP-01").exists())
 
     def test_api_is_tenant_scoped(self):
         Asset.objects.create(tenant=self.tenant, asset_tag="A-1", name="Visible", kind=Asset.Kind.SERVER, owner=self.owner, custodian=self.owner, criticality=CriticalService.Criticality.HIGH, created_by=self.owner)

@@ -22,7 +22,7 @@ role-aware API/UI, audit events, dashboard gaps and PostgreSQL RLS are included.
 CSV, XLSX and legacy XLS files now use normalized header aliases rather than a
 fixed column order; required semantic fields, tenant people and scope references
 must still resolve unambiguously before the all-or-nothing import proceeds.
-Focused inventory tests passed 7/7; the full suite passed 99 tests with 6
+Focused inventory tests passed 8/8; the full suite passed 99 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 
