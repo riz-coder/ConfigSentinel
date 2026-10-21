@@ -12,6 +12,8 @@ from pypdf import PdfReader
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.utils import timezone
@@ -26,6 +28,7 @@ from .models import (
     ClauseEvidence,
     ClauseEvidenceReview,
     ClauseAuditAssessment,
+    AuditorReport,
     ClauseAIAnalysis,
     MappingReview,
     Obligation,
@@ -44,6 +47,85 @@ from .ai import analyze_clause
 
 _OCR_ENGINE = None
 _OCR_LOCK = Lock()
+
+
+@transaction.atomic
+def create_auditor_account(*, tenant, actor, username, email, password):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.OWNER:
+        raise PermissionDenied("Only the tenant owner may create an auditor account.")
+    username = username.strip()
+    if not username:
+        raise ValidationError("Auditor username is required.")
+    user_model = get_user_model()
+    if user_model.objects.filter(username__iexact=username).exists():
+        raise ValidationError("That username is already in use.")
+    candidate = user_model(username=username, email=email.strip())
+    validate_password(password, user=candidate)
+    candidate.set_password(password)
+    candidate.save()
+    Membership.objects.create(user=candidate, tenant=tenant, role=Membership.Role.AUDITOR)
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="auditor.account_created",
+        object_type="User", object_id=str(candidate.pk), metadata={"username": candidate.username},
+    )
+    return candidate
+
+
+@transaction.atomic
+def upload_auditor_report(*, tenant, actor, title, filename, content):
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("Only an assigned auditor may upload an auditor report.")
+    if not title.strip():
+        raise ValidationError("Report title is required.")
+    if not filename.lower().endswith(".pdf") or not content.startswith(b"%PDF"):
+        raise ValidationError("Only a valid PDF auditor report may be uploaded.")
+    if not content or len(content) > settings.EVIDENCE_MAX_UPLOAD_BYTES:
+        raise ValidationError("Auditor report is empty or exceeds the configured upload limit.")
+    safe_name = get_valid_filename(filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1])[:255]
+    report = AuditorReport(
+        tenant=tenant, title=title.strip(), original_filename=safe_name, size_bytes=len(content),
+        plaintext_sha256="0" * 64, ciphertext_sha256="0" * 64, storage_key="pending",
+        wrapped_dek="pending", wrap_nonce="pending", content_nonce="pending", uploaded_by=actor,
+    )
+    encrypted = LocalEncryptedObjectStore().encrypt_and_store(
+        tenant_id=tenant.id, artifact_id=report.id, plaintext=content,
+    )
+    report.storage_key = encrypted.storage_key
+    report.wrapped_dek = encrypted.wrapped_dek
+    report.wrap_nonce = encrypted.wrap_nonce
+    report.content_nonce = encrypted.content_nonce
+    report.plaintext_sha256 = encrypted.plaintext_sha256
+    report.ciphertext_sha256 = encrypted.ciphertext_sha256
+    report.size_bytes = encrypted.size_bytes
+    try:
+        report.save()
+    except Exception:
+        LocalEncryptedObjectStore().purge(encrypted.storage_key)
+        raise
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="auditor.report_uploaded",
+        object_type="AuditorReport", object_id=str(report.id),
+        metadata={"sha256": report.plaintext_sha256, "size_bytes": report.size_bytes},
+    )
+    return report
+
+
+def retrieve_auditor_report(*, report, actor):
+    membership = Membership.objects.filter(user=actor, tenant=report.tenant, is_active=True).first()
+    if membership is None or membership.role not in {
+        Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER,
+        Membership.Role.COMPLIANCE_LEAD, Membership.Role.AUDITOR,
+    }:
+        raise PermissionDenied("Your role cannot download auditor reports.")
+    content = LocalEncryptedObjectStore().retrieve_and_verify(report)
+    AuditEvent.objects.create(
+        tenant=report.tenant, actor=actor, action="auditor.report_downloaded",
+        object_type="AuditorReport", object_id=str(report.id),
+        metadata={"sha256": report.plaintext_sha256},
+    )
+    return content
 
 
 def clause_legal_ready(subclause):

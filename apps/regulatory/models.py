@@ -179,6 +179,36 @@ class ClauseAuditAssessment(models.Model):
         raise ValidationError("Clause audit assessments are append-only.")
 
 
+class AuditorReport(models.Model):
+    """Encrypted auditor-supplied PDF; never an automatic clause verdict."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="auditor_reports")
+    title = models.CharField(max_length=255)
+    original_filename = models.CharField(max_length=255)
+    size_bytes = models.PositiveBigIntegerField()
+    plaintext_sha256 = models.CharField(max_length=64)
+    ciphertext_sha256 = models.CharField(max_length=64)
+    storage_key = models.CharField(max_length=255, unique=True)
+    wrapped_dek = models.TextField()
+    wrap_nonce = models.CharField(max_length=24)
+    content_nonce = models.CharField(max_length=24)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="uploaded_auditor_reports")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Auditor reports are immutable; upload a new version.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Auditor reports are retained as audit records.")
+
+
 class ClauseAIAnalysis(models.Model):
     """Versioned preliminary AI finding; never an auditor or legal decision."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

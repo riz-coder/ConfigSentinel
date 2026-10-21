@@ -6,7 +6,8 @@ from django.db import close_old_connections
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
+from io import BytesIO
 import csv
 from threading import Thread
 
@@ -21,8 +22,9 @@ from .models import (
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
     ClauseAuditAssessment,
+    AuditorReport,
 )
-from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, coverage_report, create_mapping, create_obligation, extract_source_regulations, import_pack, review_clause_evidence, review_mapping, review_version, update_source_metadata, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
+from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, coverage_report, create_auditor_account, create_mapping, create_obligation, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_mapping, review_version, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
 
 
@@ -59,6 +61,24 @@ def dashboard(request):
     for color, value in zip(colors, values):
         start, cumulative = cumulative, cumulative + (value * 100 / total)
         stops.append(f"{color} {start:.2f}% {cumulative:.2f}%")
+    audit_clauses = _audit_clauses(tenant)
+    auditor_counts = {status: 0 for status in ClauseAuditAssessment.ComplianceStatus.values}
+    auditor_stale_count = 0
+    auditor_not_reviewed_count = 0
+    for clause in audit_clauses:
+        if not clause.latest_assessment:
+            auditor_not_reviewed_count += 1
+        elif clause.assessment_stale:
+            auditor_stale_count += 1
+        else:
+            auditor_counts[clause.latest_assessment.compliance_status] += 1
+    auditor_values = [auditor_counts["READY"], auditor_counts["GAP"], auditor_counts["INSUFFICIENT_EVIDENCE"], auditor_counts["LEGAL_UNVERIFIED"], auditor_stale_count, auditor_not_reviewed_count]
+    auditor_colors = ["#15965a", "#c33e3e", "#8b5cf6", "#e5a51b", "#f97316", "#cbd5e1"]
+    auditor_total = len(audit_clauses) or 1
+    auditor_cumulative, auditor_stops = 0.0, []
+    for color, value in zip(auditor_colors, auditor_values):
+        start, auditor_cumulative = auditor_cumulative, auditor_cumulative + (value * 100 / auditor_total)
+        auditor_stops.append(f"{color} {start:.2f}% {auditor_cumulative:.2f}%")
     return render(
         request,
         "dashboard.html",
@@ -77,6 +97,12 @@ def dashboard(request):
             "non_compliant_count": counts["NON_COMPLIANT"], "insufficient_count": counts["INSUFFICIENT_EVIDENCE"],
             "awaiting_analysis_count": awaiting_count, "no_evidence_count": no_evidence_count,
             "pie_gradient": ", ".join(stops),
+            "auditor_ready_count": auditor_counts["READY"], "auditor_gap_count": auditor_counts["GAP"],
+            "auditor_insufficient_count": auditor_counts["INSUFFICIENT_EVIDENCE"],
+            "auditor_legal_unverified_count": auditor_counts["LEGAL_UNVERIFIED"],
+            "auditor_stale_count": auditor_stale_count, "auditor_not_reviewed_count": auditor_not_reviewed_count,
+            "auditor_pie_gradient": ", ".join(auditor_stops),
+            "auditor_report_count": AuditorReport.objects.filter(tenant=tenant).count(),
             "running_jobs": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).select_related("subclause__regulation")[:10],
             "completed_jobs": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).select_related("subclause__regulation")[:10],
             "sources": sources[:10],
@@ -310,10 +336,23 @@ def auditor_room(request):
     membership = request.tenant_membership
     if request.method == "POST":
         try:
-            if membership.role != Membership.Role.AUDITOR:
-                raise PermissionDenied("Only an assigned auditor may record independent decisions.")
             operation = request.POST.get("operation")
-            if operation == "review_file":
+            if operation == "create_auditor":
+                create_auditor_account(
+                    tenant=tenant, actor=request.user, username=request.POST.get("username", ""),
+                    email=request.POST.get("email", ""), password=request.POST.get("password", ""),
+                )
+                messages.success(request, "Auditor account created. Share credentials through an approved private channel.")
+            elif operation == "upload_report":
+                upload = request.FILES.get("report")
+                if upload is None:
+                    raise ValidationError("Select an auditor PDF report.")
+                upload_auditor_report(
+                    tenant=tenant, actor=request.user, title=request.POST.get("title", ""),
+                    filename=upload.name, content=upload.read(),
+                )
+                messages.success(request, "Encrypted auditor PDF uploaded. Clause decisions remain separately attributable.")
+            elif operation == "review_file":
                 artifact = get_object_or_404(ClauseEvidence, pk=request.POST.get("evidence"), tenant=tenant)
                 review_clause_evidence(
                     artifact=artifact, reviewer=request.user,
@@ -335,9 +374,23 @@ def auditor_room(request):
     return render(request, "regulatory/auditor_room.html", {
         "tenant": tenant, "membership": membership, "clauses": _audit_clauses(tenant),
         "can_review": membership.role == Membership.Role.AUDITOR,
+        "can_create_auditor": membership.role == Membership.Role.OWNER,
+        "auditors": Membership.objects.filter(tenant=tenant, role=Membership.Role.AUDITOR, is_active=True).select_related("user"),
+        "reports": AuditorReport.objects.filter(tenant=tenant).select_related("uploaded_by"),
         "evidence_decisions": [ClauseEvidence.Status.ACCEPTED, ClauseEvidence.Status.REJECTED],
         "assessment_decisions": ClauseAuditAssessment.Decision.choices,
     })
+
+
+@login_required
+def auditor_report_download(request, report_id):
+    tenant = tenant_for_request(request)
+    report = get_object_or_404(AuditorReport, pk=report_id, tenant=tenant)
+    try:
+        content = retrieve_auditor_report(report=report, actor=request.user)
+    except PermissionDenied as exc:
+        return HttpResponse(str(exc), status=403)
+    return FileResponse(BytesIO(content), content_type="application/pdf", as_attachment=True, filename=report.original_filename)
 
 
 @login_required

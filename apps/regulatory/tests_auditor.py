@@ -9,8 +9,8 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from apps.tenancy.models import Membership, Tenant
 
-from .models import ClauseAuditAssessment, ClauseEvidence, Regulation, RegulatorySource, RegulatoryVersion, SubClause
-from .services import assess_clause, review_clause_evidence, upload_clause_evidence
+from .models import AuditorReport, ClauseAuditAssessment, ClauseEvidence, Regulation, RegulatorySource, RegulatoryVersion, SubClause
+from .services import assess_clause, create_auditor_account, review_clause_evidence, upload_auditor_report, upload_clause_evidence
 
 
 class ClauseAuditorWorkflowTests(TestCase):
@@ -114,3 +114,56 @@ class ClauseAuditorWorkflowTests(TestCase):
         body = response.content.decode()
         self.assertIn("Synthetic clause", body)
         self.assertNotIn("Synthetic approved policy evidence", body)
+
+    def test_owner_creates_dedicated_auditor_account(self):
+        user = create_auditor_account(
+            tenant=self.tenant, actor=self.owner, username="field-auditor",
+            email="auditor@example.test", password="Unique-Audit-Pass-9274!",
+        )
+        membership = Membership.objects.get(user=user, tenant=self.tenant)
+        self.assertEqual(membership.role, Membership.Role.AUDITOR)
+        self.assertTrue(user.check_password("Unique-Audit-Pass-9274!"))
+        with self.assertRaises(PermissionDenied):
+            create_auditor_account(
+                tenant=self.tenant, actor=self.auditor, username="forbidden-auditor",
+                email="", password="Unique-Audit-Pass-9275!",
+            )
+
+    def test_auditor_pdf_is_encrypted_and_download_is_authorized(self):
+        content = b"%PDF-1.4\nSynthetic signed auditor report"
+        report = upload_auditor_report(
+            tenant=self.tenant, actor=self.auditor, title="On-site review 2026",
+            filename="signed-review.pdf", content=content,
+        )
+        stored = (Path(self.temp.name) / report.storage_key).read_bytes()
+        self.assertNotEqual(stored, content)
+        self.assertEqual(AuditorReport.objects.count(), 1)
+        with self.assertRaises(PermissionDenied):
+            upload_auditor_report(
+                tenant=self.tenant, actor=self.owner, title="Invalid uploader",
+                filename="report.pdf", content=content,
+            )
+
+        self.client.force_login(self.owner)
+        device = TOTPDevice.objects.create(user=self.owner, name="download-test", confirmed=True)
+        session = self.client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        response = self.client.get(f"/auditor/reports/{report.id}/download/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), content)
+
+    def test_dashboard_shows_latest_human_auditor_state(self):
+        assess_clause(
+            subclause=self.clause, reviewer=self.auditor,
+            decision=ClauseAuditAssessment.Decision.REQUEST_UPDATE,
+            note="More evidence required.", gaps="Provide approval record.",
+        )
+        self.client.force_login(self.owner)
+        device = TOTPDevice.objects.create(user=self.owner, name="dashboard-test", confirmed=True)
+        session = self.client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        response = self.client.get("/")
+        self.assertContains(response, "Independent auditor distribution")
+        self.assertEqual(response.context["auditor_legal_unverified_count"], 1)

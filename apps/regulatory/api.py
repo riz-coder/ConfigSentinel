@@ -13,6 +13,7 @@ from .models import (
     Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TestProcedure,
     TrustedSigningKey,
     ClauseAuditAssessment, ClauseEvidence, ClauseEvidenceReview, SubClause,
+    AuditorReport,
 )
 from .serializers import (
     ControlDefinitionSerializer, EvidenceRequirementSerializer, ObligationControlMappingSerializer,
@@ -20,8 +21,9 @@ from .serializers import (
     TestProcedureSerializer, TrustedSigningKeySerializer,
     ClauseAuditAssessmentSerializer, ClauseEvidenceReviewSerializer,
     ClauseAuditAssessmentCreateSerializer, ClauseEvidenceReviewCreateSerializer,
+    AuditorAccountSerializer, AuditorReportSerializer, AuditorReportUploadSerializer,
 )
-from .services import assess_clause, compare_versions, coverage_report, create_mapping, import_pack, review_clause_evidence, review_mapping, review_version
+from .services import assess_clause, compare_versions, coverage_report, create_auditor_account, create_mapping, import_pack, review_clause_evidence, review_mapping, review_version, upload_auditor_report
 
 
 class TenantScopedViewSetMixin:
@@ -290,4 +292,58 @@ class ClauseAuditAssessmentViewSet(TenantScopedViewSetMixin, mixins.ListModelMix
         except DjangoValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ClauseAuditAssessmentSerializer(assessment).data, status=status.HTTP_201_CREATED)
+
+
+class AuditorAccountViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
+    serializer_class = AuditorAccountSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        if request.tenant_membership.role != Membership.Role.OWNER:
+            self.permission_denied(request, message="Only the tenant owner may manage auditor accounts.")
+        rows = Membership.objects.filter(
+            tenant=self.tenant(), role=Membership.Role.AUDITOR, is_active=True,
+        ).select_related("user")
+        return Response([{"id": row.user_id, "username": row.user.username, "email": row.user.email} for row in rows])
+
+    def create(self, request):
+        incoming = self.get_serializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        try:
+            user = create_auditor_account(
+                tenant=self.tenant(), actor=request.user,
+                username=incoming.validated_data["username"], email=incoming.validated_data.get("email", ""),
+                password=incoming.validated_data["password"],
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"id": user.pk, "username": user.username, "email": user.email}, status=status.HTTP_201_CREATED)
+
+
+class AuditorReportViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_serializer_class(self):
+        return AuditorReportUploadSerializer if self.action == "create" else AuditorReportSerializer
+
+    def get_queryset(self):
+        return AuditorReport.objects.filter(tenant=self.tenant()).select_related("uploaded_by")
+
+    def create(self, request):
+        incoming = self.get_serializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        upload = incoming.validated_data["report"]
+        try:
+            report = upload_auditor_report(
+                tenant=self.tenant(), actor=request.user, title=incoming.validated_data["title"],
+                filename=upload.name, content=upload.read(),
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(AuditorReportSerializer(report).data, status=status.HTTP_201_CREATED)
 

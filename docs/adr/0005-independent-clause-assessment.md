@@ -28,3 +28,9 @@ request `INSUFFICIENT_EVIDENCE`.
 - Reports can show defensible review history without claiming certification.
 - PostgreSQL RLS and database triggers enforce tenant scope and append-only
   behavior in production; SQLite tests cover application boundaries only.
+- Tenant owners may create dedicated auditor identities, but cannot exercise
+  auditor decisions. Passwords pass Django validation and are never logged or
+  returned after creation.
+- An auditor may upload an encrypted signed/on-site PDF report as an immutable
+  audit artifact. The upload never bulk-sets clause outcomes; each clause
+  decision remains separately attributable and source-gated.

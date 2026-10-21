@@ -30,6 +30,9 @@ and collector links; administrator access; tenant-to-tenant boundary.
   downloads are opaque attachments with no-store caching.
 - Upload, review, download, hold, release, and purge are tenant/role scoped and
   attributable; uploader self-review and early/held purge fail closed.
+- Auditor accounts are owner-created with password validation; auditor PDF
+  reports are encrypted, tenant-scoped and append-only. Uploading a report does
+  not import or inflate clause states.
 - `.env`, local databases, media, and virtual environments are Git-ignored.
 
 ## Open risks for later packages

@@ -5,6 +5,7 @@ from .models import (
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
     RegulatoryVersion, TestProcedure, TrustedSigningKey,
     ClauseAuditAssessment, ClauseEvidenceReview,
+    AuditorReport,
 )
 
 
@@ -150,4 +151,25 @@ class ClauseAuditAssessmentCreateSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=ClauseAuditAssessment.Decision.choices)
     note = serializers.CharField(allow_blank=False)
     gaps = serializers.CharField(required=False, allow_blank=True)
+
+
+class AuditorAccountSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class AuditorReportSerializer(serializers.ModelSerializer):
+    uploaded_by = serializers.CharField(source="uploaded_by.username", read_only=True)
+
+    class Meta:
+        model = AuditorReport
+        fields = ["id", "title", "original_filename", "size_bytes", "plaintext_sha256", "uploaded_by", "uploaded_at"]
+        read_only_fields = fields
+
+
+class AuditorReportUploadSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    report = serializers.FileField()
 

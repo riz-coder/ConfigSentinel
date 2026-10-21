@@ -42,6 +42,25 @@ Regulatory source status: uploaded clauses remain `SOURCE_PENDING`; therefore
 auditor assessments correctly remain `LEGAL_UNVERIFIED` until the user-supplied
 official source and exact mappings complete WP-REG dual review.
 
+### Current extension: auditor onboarding, signed report and dashboard roll-up
+
+- Allow tenant owners to create a dedicated auditor login from the application;
+  passwords are validated and never returned or written to audit metadata.
+- Allow auditors to upload an encrypted PDF containing their signed/on-site
+  report. Uploading a report does not silently change clause decisions; exact
+  clause assessments remain attributable records in the auditor room.
+- Add a separate dashboard chart for the latest human auditor states: `READY`,
+  `GAP`, `INSUFFICIENT_EVIDENCE`, `LEGAL_UNVERIFIED`, stale and not reviewed.
+- Acceptance: owner-only account creation, auditor-only report upload, tenant
+  isolation, encrypted PDF storage, download authorization, dashboard roll-up,
+  audit events, migrations, API contract, UI, docs and negative tests.
+
+Extension status: implemented. Targeted auditor tests passed 8/8 and the full
+suite passed 83 tests with 5 PostgreSQL-only tests skipped on local SQLite.
+Local migrations and Django system checks passed. The source pack remains
+`SOURCE_PENDING`, so the human chart currently distinguishes auditor review
+from legal verification and does not present a regulator-certified result.
+
 ### Previous work package
 
 `WP-REG-02` — source PDF intake, reviewed clause register, clause-evidence

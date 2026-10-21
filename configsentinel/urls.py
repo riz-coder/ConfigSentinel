@@ -11,8 +11,9 @@ from apps.regulatory.api import (
     RegulationViewSet, RegulatorySourceViewSet, RegulatoryVersionViewSet,
     TestProcedureViewSet, TrustedSigningKeyViewSet,
     ClauseAuditAssessmentViewSet, ClauseEvidenceReviewViewSet,
+    AuditorAccountViewSet, AuditorReportViewSet,
 )
-from apps.regulatory.views import audit_report, auditor_room, dashboard, mapping_center, regulatory_center
+from apps.regulatory.views import audit_report, auditor_report_download, auditor_room, dashboard, mapping_center, regulatory_center
 from apps.evidence.api import EvidenceArtifactViewSet
 from apps.evidence.views import evidence_center, evidence_download
 from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceViewSet, ScopeGrantViewSet
@@ -30,6 +31,8 @@ router.register("evidence-requirements", EvidenceRequirementViewSet, basename="e
 router.register("obligation-mappings", ObligationControlMappingViewSet, basename="obligation-mapping")
 router.register("clause-evidence-reviews", ClauseEvidenceReviewViewSet, basename="clause-evidence-review")
 router.register("clause-audit-assessments", ClauseAuditAssessmentViewSet, basename="clause-audit-assessment")
+router.register("auditor-accounts", AuditorAccountViewSet, basename="auditor-account")
+router.register("auditor-reports", AuditorReportViewSet, basename="auditor-report")
 router.register("evidence", EvidenceArtifactViewSet, basename="evidence")
 router.register("devices", DeviceViewSet, basename="device")
 router.register("credential-references", CredentialReferenceViewSet, basename="credential-reference")
@@ -51,6 +54,7 @@ urlpatterns = [
     path("regulatory/mappings/", mapping_center, name="mapping-center"),
     path("auditor/", auditor_room, name="auditor-room"),
     path("auditor/report/", audit_report, name="audit-report"),
+    path("auditor/reports/<uuid:report_id>/download/", auditor_report_download, name="auditor-report-download"),
     path("evidence/", evidence_center, name="evidence-center"),
     path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
     path("collector/", collector_center, name="collector-center"),
