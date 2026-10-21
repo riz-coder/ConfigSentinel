@@ -29,7 +29,8 @@ Unknown acquisition/review dates no longer block a batch import, and repeated
 row failures are compacted into readable row ranges. Business owner/custodian
 names and roles are preserved without requiring matching login accounts; the
 authenticated importer remains the accountable system actor. Focused inventory tests
-passed 12/12; the earlier full suite passed 101 tests with 6
+now also cover permission-gated editing, traceable archival and criticality UI
+indicators; focused inventory tests passed 14/14. The earlier full suite passed 101 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 

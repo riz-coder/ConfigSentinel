@@ -38,7 +38,7 @@ class CriticalServiceViewSet(InventoryViewSet, mixins.ListModelMixin, mixins.Ret
 class AssetViewSet(InventoryViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
     model, serializer_class = Asset, AssetSerializer
     def get_queryset(self):
-        return super().get_queryset().select_related("site", "service", "owner", "custodian")
+        return super().get_queryset().filter(is_active=True).select_related("site", "service", "owner", "custodian")
 
 
 class AssetDependencyViewSet(InventoryViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):

@@ -37,3 +37,8 @@ Imported owner and custodian values may identify a person, team or operational
 role; they are preserved verbatim. When they do not match a workspace account,
 the authenticated importer is recorded as the accountable system actor without
 rewriting the source-register value.
+
+Owners and compliance leads may edit active asset identity, classification and
+accountability fields. The UI's Delete action is a traceable archive: the asset
+is removed from active UI/API scope while its record and append-only audit
+history remain available for investigation.

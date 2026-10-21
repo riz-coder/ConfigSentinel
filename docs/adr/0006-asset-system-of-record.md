@@ -22,3 +22,7 @@ Source-register owner and custodian text is stored separately from application
 accountability. A matching active tenant user is linked when available;
 otherwise the authenticated importer is linked while the original person,
 team or role remains unchanged and visible.
+
+Asset removal is implemented as archival rather than physical deletion so
+historical evidence, dependencies and audit references cannot be silently
+destroyed. Active inventory and API queries exclude archived assets.

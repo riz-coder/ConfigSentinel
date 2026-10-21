@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 
 from apps.tenancy.models import Membership, Tenant
 from .models import Asset, CriticalService, Site
-from .services import TEMPLATE_COLUMNS, asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object, standard_template_rows
+from .services import TEMPLATE_COLUMNS, archive_asset, asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object, standard_template_rows, update_asset
 
 
 class InventoryFoundationTests(TestCase):
@@ -93,6 +93,25 @@ class InventoryFoundationTests(TestCase):
         self.assertEqual(asset.declared_custodian, "Network Operations")
         self.assertEqual(asset.owner, self.owner)
         self.assertEqual(asset.custodian, self.owner)
+
+    def test_operator_can_edit_and_archive_asset_without_destroying_it(self):
+        asset = Asset.objects.create(tenant=self.tenant, asset_tag="A-EDIT", name="Before", description="Before", business_function="Operations", kind=Asset.Kind.SERVER, owner=self.owner, custodian=self.owner, criticality=CriticalService.Criticality.HIGH, created_by=self.owner)
+        update_asset(asset=asset, actor=self.owner, values={"asset_tag": "A-EDIT", "name": "After", "description": "After", "business_function": "Operations", "declared_owner": "IP-NOC", "declared_custodian": "NOC", "kind": Asset.Kind.SERVER, "criticality": CriticalService.Criticality.CRITICAL, "classification": Asset.Classification.INTERNAL, "lifecycle": Asset.Lifecycle.ACTIVE, "is_cii": "on"})
+        asset.refresh_from_db()
+        self.assertEqual(asset.name, "After")
+        self.assertEqual(asset.criticality, CriticalService.Criticality.CRITICAL)
+        self.assertTrue(asset.is_cii)
+        archive_asset(asset=asset, actor=self.owner)
+        asset.refresh_from_db()
+        self.assertFalse(asset.is_active)
+        self.assertEqual(asset.archived_by, self.owner)
+
+    def test_viewer_cannot_edit_or_archive_asset(self):
+        asset = Asset.objects.create(tenant=self.tenant, asset_tag="A-LOCK", name="Locked", kind=Asset.Kind.SERVER, owner=self.owner, custodian=self.owner, criticality=CriticalService.Criticality.LOW, created_by=self.owner)
+        with self.assertRaises(PermissionDenied):
+            update_asset(asset=asset, actor=self.viewer, values={"name": "Changed"})
+        with self.assertRaises(PermissionDenied):
+            archive_asset(asset=asset, actor=self.viewer)
 
     def test_template_csv_has_fixed_policy_columns_and_three_examples(self):
         rows = list(csv.DictReader(io.StringIO(asset_template_csv(self.owner.username).decode("utf-8-sig"))))

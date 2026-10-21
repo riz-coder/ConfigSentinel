@@ -9,7 +9,7 @@ from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import Asset, AssetDependency, CriticalService, Site
-from .services import asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object
+from .services import archive_asset, asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object, update_asset
 
 
 @login_required
@@ -50,18 +50,28 @@ def inventory_center(request):
                 dependent = Asset.objects.get(tenant=tenant, pk=request.POST["dependent"])
                 provider = Asset.objects.get(tenant=tenant, pk=request.POST["provider"])
                 save_inventory_object(obj=AssetDependency(tenant=tenant, dependent=dependent, provider=provider, kind=request.POST["kind"], notes=request.POST.get("notes", "").strip(), created_by=request.user), actor=request.user)
+            elif operation == "asset_edit":
+                asset = Asset.objects.get(tenant=tenant, pk=request.POST["asset_id"], is_active=True)
+                update_asset(asset=asset, actor=request.user, values=request.POST)
+            elif operation == "asset_archive":
+                asset = Asset.objects.get(tenant=tenant, pk=request.POST["asset_id"], is_active=True)
+                archive_asset(asset=asset, actor=request.user)
             elif operation == "csv":
                 upload = request.FILES["inventory_file"]
                 count = import_assets_file(tenant=tenant, actor=request.user, filename=upload.name, content=upload.read())
                 messages.success(request, f"Imported {count} validated assets.")
             else:
                 raise ValidationError("Unknown inventory operation.")
-            if operation != "csv":
+            if operation == "asset_edit":
+                messages.success(request, "Asset updated.")
+            elif operation == "asset_archive":
+                messages.success(request, "Asset deleted from active inventory; audit history was retained.")
+            elif operation != "csv":
                 messages.success(request, "Inventory record created.")
             return redirect("inventory-center")
         except (ValidationError, PermissionDenied, Membership.DoesNotExist, Asset.DoesNotExist, KeyError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
-    assets = Asset.objects.filter(tenant=tenant).select_related("site", "service", "owner", "custodian")
+    assets = Asset.objects.filter(tenant=tenant, is_active=True).select_related("site", "service", "owner", "custodian")
     today = timezone.localdate()
     return render(request, "inventory/center.html", {
         "tenant": tenant, "assets": assets, "sites": Site.objects.filter(tenant=tenant),

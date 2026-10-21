@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
+from django.utils import timezone
 
 from apps.auditlog.models import AuditEvent
 from apps.tenancy.models import Membership
@@ -284,6 +285,45 @@ def save_inventory_object(*, obj, actor):
     obj.save()
     AuditEvent.objects.create(tenant=obj.tenant, actor=actor, action=f"inventory.{obj._meta.model_name}_created", object_type=obj.__class__.__name__, object_id=str(obj.pk), metadata={})
     return obj
+
+
+@transaction.atomic
+def update_asset(*, asset, actor, values):
+    require_inventory_operator(tenant=asset.tenant, actor=actor)
+    allowed = {"asset_tag", "name", "description", "business_function", "declared_owner", "declared_custodian", "kind", "criticality", "classification", "lifecycle"}
+    changed = []
+    for field in allowed:
+        if field in values:
+            value = str(values[field]).strip()
+            if getattr(asset, field) != value:
+                setattr(asset, field, value)
+                changed.append(field)
+    is_cii = str(values.get("is_cii", "")).lower() in {"1", "true", "yes", "on"}
+    if asset.is_cii != is_cii:
+        asset.is_cii = is_cii
+        changed.append("is_cii")
+    # Legacy imports may contain acknowledged policy-data gaps. Editing identity
+    # or classification must not silently fill them or make the row uneditable.
+    gap_fields = {
+        "physical_location", "logical_network_location", "decommissioning_plan",
+        "asset_value", "risk_rating", "associated_security_controls",
+        "data_stored_or_processed", "backup_recovery_status",
+        "linked_systems_dependencies", "licensing_warranty_information",
+    }
+    asset.full_clean(exclude=[field for field in gap_fields if not getattr(asset, field)])
+    asset.save()
+    AuditEvent.objects.create(tenant=asset.tenant, actor=actor, action="inventory.asset_updated", object_type="Asset", object_id=str(asset.pk), metadata={"changed_fields": sorted(changed)})
+    return asset
+
+
+@transaction.atomic
+def archive_asset(*, asset, actor):
+    require_inventory_operator(tenant=asset.tenant, actor=actor)
+    asset.is_active = False
+    asset.archived_at = timezone.now()
+    asset.archived_by = actor
+    asset.save(update_fields=["is_active", "archived_at", "archived_by", "updated_at"])
+    AuditEvent.objects.create(tenant=asset.tenant, actor=actor, action="inventory.asset_archived", object_type="Asset", object_id=str(asset.pk), metadata={"asset_tag": asset.asset_tag})
 
 
 @transaction.atomic
