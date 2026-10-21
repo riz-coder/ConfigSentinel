@@ -37,3 +37,7 @@ request `INSUFFICIENT_EVIDENCE`.
 - Local deterministic PDF extraction may prepare clause/status/remarks drafts.
   Drafts have no dashboard effect; only an explicit auditor confirmation creates
   immutable assessments. Unmatched and duplicate clause references fail closed.
+- Auditor gap decisions create one traceable corrective-action draft. ISP-side
+  owners provide remediation and versioned evidence; only an independent auditor
+  can close or reopen retest workflow. Closing an action does not change legal
+  source state or make a regulatory compliance claim.

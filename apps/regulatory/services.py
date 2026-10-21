@@ -31,6 +31,9 @@ from .models import (
     AuditorReport,
     AuditorReportImport,
     AuditorReportImportRow,
+    CorrectiveAction,
+    CorrectiveActionEvent,
+    CorrectiveActionEvidence,
     ClauseAIAnalysis,
     MappingReview,
     Obligation,
@@ -326,6 +329,7 @@ def confirm_auditor_report_import(*, batch, actor):
             evidence_snapshot=snapshot, reviewer=actor,
         )
         AuditorReportImportRow.objects.filter(pk=row.pk).update(confirmed_assessment=assessment)
+        ensure_corrective_action_for_assessment(assessment=assessment, actor=actor)
     batch.status = AuditorReportImport.Status.CONFIRMED
     batch.confirmed_by = actor
     batch.confirmed_at = now
@@ -355,6 +359,180 @@ def clause_legal_ready(subclause):
             for obligation in obligations
         )
     )
+
+
+def _action_event(*, action, actor, kind, note):
+    sequence = (action.events.aggregate(models.Max("sequence"))["sequence__max"] or 0) + 1
+    return CorrectiveActionEvent.objects.create(
+        action=action, sequence=sequence, kind=kind, note=note.strip(), actor=actor,
+    )
+
+
+def _action_membership(actor, tenant):
+    return Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+
+
+@transaction.atomic
+def ensure_corrective_action_for_assessment(*, assessment, actor):
+    """Create one traceable draft only for a human auditor gap decision."""
+    assessment = ClauseAuditAssessment.objects.select_for_update().select_related("subclause__regulation").get(pk=assessment.pk)
+    if assessment.decision not in {
+        ClauseAuditAssessment.Decision.REJECT,
+        ClauseAuditAssessment.Decision.REQUEST_UPDATE,
+    }:
+        return None
+    action, created = CorrectiveAction.objects.get_or_create(
+        source_assessment=assessment,
+        defaults={
+            "tenant": assessment.tenant,
+            "subclause": assessment.subclause,
+            "title": f"Clause {assessment.subclause.clause_path} remediation",
+            "gap_summary": assessment.gaps or assessment.note,
+            "created_by": actor,
+        },
+    )
+    if created:
+        _action_event(
+            action=action, actor=actor, kind=CorrectiveActionEvent.Kind.CREATED,
+            note="Draft corrective action created from the independent auditor assessment.",
+        )
+        AuditEvent.objects.create(
+            tenant=assessment.tenant, actor=actor, action="corrective_action.draft_created",
+            object_type="CorrectiveAction", object_id=str(action.id),
+            metadata={"clause": assessment.subclause.clause_path, "assessment": str(assessment.id)},
+        )
+    return action
+
+
+@transaction.atomic
+def create_missing_corrective_action_drafts(*, tenant, actor):
+    membership = _action_membership(actor, tenant)
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD, Membership.Role.AUDITOR}:
+        raise PermissionDenied("An owner, compliance lead, or auditor may generate missing action drafts.")
+    assessments = ClauseAuditAssessment.objects.filter(
+        tenant=tenant, decision__in=[
+            ClauseAuditAssessment.Decision.REJECT,
+            ClauseAuditAssessment.Decision.REQUEST_UPDATE,
+        ],
+    ).select_related("subclause__regulation")
+    created = 0
+    for assessment in assessments:
+        if not hasattr(assessment, "corrective_action"):
+            ensure_corrective_action_for_assessment(assessment=assessment, actor=actor)
+            created += 1
+    return created
+
+
+@transaction.atomic
+def configure_corrective_action(*, action, actor, assigned_to, due_date, remediation_plan):
+    action = CorrectiveAction.objects.select_for_update().select_related("tenant").get(pk=action.pk)
+    membership = _action_membership(actor, action.tenant)
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+        raise PermissionDenied("Only the tenant owner or compliance lead may assign a corrective action.")
+    if action.status == CorrectiveAction.Status.CLOSED:
+        raise ValidationError("Closed actions can only be reopened by an auditor.")
+    assignee_membership = _action_membership(assigned_to, action.tenant)
+    if assignee_membership is None or assignee_membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
+        raise ValidationError("Assign the action to an active tenant owner or compliance lead.")
+    if not due_date:
+        raise ValidationError("A corrective-action due date is required.")
+    if not remediation_plan.strip():
+        raise ValidationError("A remediation plan is required.")
+    action.assigned_to = assigned_to
+    action.due_date = due_date
+    action.remediation_plan = remediation_plan.strip()
+    if action.status == CorrectiveAction.Status.OPEN:
+        action.status = CorrectiveAction.Status.IN_PROGRESS
+    action.save(update_fields=["assigned_to", "due_date", "remediation_plan", "status", "updated_at"])
+    _action_event(action=action, actor=actor, kind=CorrectiveActionEvent.Kind.ASSIGNED, note=f"Action assigned with due date {due_date}.")
+    AuditEvent.objects.create(tenant=action.tenant, actor=actor, action="corrective_action.configured", object_type="CorrectiveAction", object_id=str(action.id), metadata={"assigned_to": assigned_to.pk, "due_date": str(due_date)})
+    return action
+
+
+def _ensure_action_manager(action, actor):
+    membership = _action_membership(actor, action.tenant)
+    if membership is None:
+        raise PermissionDenied("Active tenant membership is required.")
+    if membership.role in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD} and (action.assigned_to_id in {None, actor.pk} or membership.role == Membership.Role.OWNER):
+        return
+    raise PermissionDenied("Only the assigned owner, tenant owner, or compliance lead may update this corrective action.")
+
+
+@transaction.atomic
+def add_corrective_action_progress(*, action, actor, note):
+    action = CorrectiveAction.objects.select_for_update().select_related("tenant").get(pk=action.pk)
+    _ensure_action_manager(action, actor)
+    if action.status in {CorrectiveAction.Status.CLOSED, CorrectiveAction.Status.READY_FOR_RETEST}:
+        raise ValidationError("This action cannot receive a progress update in its current state.")
+    if not note.strip():
+        raise ValidationError("A progress update is required.")
+    action.status = CorrectiveAction.Status.IN_PROGRESS
+    action.save(update_fields=["status", "updated_at"])
+    _action_event(action=action, actor=actor, kind=CorrectiveActionEvent.Kind.PROGRESS, note=note)
+    return action
+
+
+@transaction.atomic
+def attach_corrective_action_evidence(*, action, actor, title, filename, content):
+    action = CorrectiveAction.objects.select_for_update().select_related("tenant", "subclause").get(pk=action.pk)
+    _ensure_action_manager(action, actor)
+    if action.status in {CorrectiveAction.Status.CLOSED, CorrectiveAction.Status.READY_FOR_RETEST}:
+        raise ValidationError("Reopen or return the action to progress before adding evidence.")
+    evidence = upload_clause_evidence(
+        tenant=action.tenant, actor=actor, subclause=action.subclause,
+        title=title, filename=filename, content=content,
+    )
+    version = (action.evidence_versions.aggregate(models.Max("version"))["version__max"] or 0) + 1
+    CorrectiveActionEvidence.objects.create(action=action, evidence=evidence, version=version, added_by=actor)
+    action.status = CorrectiveAction.Status.IN_PROGRESS
+    action.save(update_fields=["status", "updated_at"])
+    _action_event(action=action, actor=actor, kind=CorrectiveActionEvent.Kind.EVIDENCE_ADDED, note=f"Evidence version {version} submitted for independent review.")
+    AuditEvent.objects.create(tenant=action.tenant, actor=actor, action="corrective_action.evidence_added", object_type="CorrectiveAction", object_id=str(action.id), metadata={"evidence": str(evidence.id), "version": version})
+    return evidence
+
+
+@transaction.atomic
+def submit_for_retest(*, action, actor, note):
+    action = CorrectiveAction.objects.select_for_update().select_related("tenant").get(pk=action.pk)
+    _ensure_action_manager(action, actor)
+    if action.status not in {CorrectiveAction.Status.OPEN, CorrectiveAction.Status.IN_PROGRESS, CorrectiveAction.Status.REOPENED}:
+        raise ValidationError("Only an open, in-progress or reopened action can be submitted for retest.")
+    if not action.assigned_to_id or not action.due_date or not action.remediation_plan:
+        raise ValidationError("Assign an owner, due date and remediation plan before retest.")
+    if not note.strip():
+        raise ValidationError("A retest submission note is required.")
+    action.status = CorrectiveAction.Status.READY_FOR_RETEST
+    action.save(update_fields=["status", "updated_at"])
+    _action_event(action=action, actor=actor, kind=CorrectiveActionEvent.Kind.READY_FOR_RETEST, note=note)
+    return action
+
+
+@transaction.atomic
+def review_corrective_action_retest(*, action, actor, decision, note):
+    action = CorrectiveAction.objects.select_for_update().select_related("tenant").get(pk=action.pk)
+    membership = _action_membership(actor, action.tenant)
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("Only an assigned auditor may close or reopen a corrective action.")
+    if decision not in {"CLOSE", "REOPEN"} or not note.strip():
+        raise ValidationError("A valid auditor close/reopen decision and note are required.")
+    if decision == "CLOSE":
+        if action.status != CorrectiveAction.Status.READY_FOR_RETEST:
+            raise ValidationError("Only a retest-ready action may be closed.")
+        action.status = CorrectiveAction.Status.CLOSED
+        action.closed_by = actor
+        action.closed_at = timezone.now()
+        kind = CorrectiveActionEvent.Kind.CLOSED
+    else:
+        if action.status not in {CorrectiveAction.Status.READY_FOR_RETEST, CorrectiveAction.Status.CLOSED}:
+            raise ValidationError("Only a retest-ready or closed action may be reopened.")
+        action.status = CorrectiveAction.Status.REOPENED
+        action.closed_by = None
+        action.closed_at = None
+        kind = CorrectiveActionEvent.Kind.REOPENED
+    action.save(update_fields=["status", "closed_by", "closed_at", "updated_at"])
+    _action_event(action=action, actor=actor, kind=kind, note=note)
+    AuditEvent.objects.create(tenant=action.tenant, actor=actor, action="corrective_action.retest_reviewed", object_type="CorrectiveAction", object_id=str(action.id), metadata={"decision": decision})
+    return action
 
 
 @transaction.atomic
@@ -443,6 +621,7 @@ def assess_clause(*, subclause, reviewer, decision, note, gaps=""):
                   "compliance_status": compliance_status, "sequence": sequence,
                   "evidence_count": len(snapshot), "legal_ready": legal_ready},
     )
+    ensure_corrective_action_for_assessment(assessment=assessment, actor=reviewer)
     return assessment
 
 

@@ -33,6 +33,9 @@ and collector links; administrator access; tenant-to-tenant boundary.
 - Auditor accounts are owner-created with password validation; auditor PDF
   reports are encrypted, tenant-scoped and append-only. Uploading a report does
   not import or inflate clause states.
+- Corrective actions preserve append-only event and evidence-version history;
+  ISP owners cannot close their own retests and auditors cannot assign or alter
+  the ISP remediation plan.
 - `.env`, local databases, media, and virtual environments are Git-ignored.
 
 ## Open risks for later packages

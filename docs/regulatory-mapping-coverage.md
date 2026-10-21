@@ -66,6 +66,13 @@ completeness indicator, not a compliance score or legal conclusion. When a
 required controlled document is missing, supporting operational artifacts are
 capped at 10% so they cannot inflate the assessment.
 
+## Corrective actions
+
+A corrective action is linked to a human auditor rejection or request for
+updated evidence, not to an inferred legal mapping or preliminary AI result.
+Closing an action records workflow closure after retest; it does not change
+the source, mapping, or legal verification state.
+
 For operational triage, less than 50% preliminary evidence coverage is shown
 as `NON_COMPLIANT` and 50–99% as `PARTIAL`. At 100%, the UI remains
 `PARTIAL` with `EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING` unless the source,

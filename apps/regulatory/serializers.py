@@ -7,6 +7,7 @@ from .models import (
     ClauseAuditAssessment, ClauseEvidenceReview,
     AuditorReport,
     AuditorReportImport, AuditorReportImportRow,
+    CorrectiveAction, CorrectiveActionEvent, CorrectiveActionEvidence,
 )
 
 
@@ -199,4 +200,54 @@ class AuditorReportImportSerializer(serializers.ModelSerializer):
         model = AuditorReportImport
         fields = ["id", "report", "report_title", "status", "extraction_note", "created_by", "created_at", "confirmed_by", "confirmed_at", "rows"]
         read_only_fields = fields
+
+
+class CorrectiveActionEventSerializer(serializers.ModelSerializer):
+    actor = serializers.CharField(source="actor.username", read_only=True)
+
+    class Meta:
+        model = CorrectiveActionEvent
+        fields = ["sequence", "kind", "note", "actor", "created_at"]
+        read_only_fields = fields
+
+
+class CorrectiveActionEvidenceSerializer(serializers.ModelSerializer):
+    filename = serializers.CharField(source="evidence.original_filename", read_only=True)
+    evidence_status = serializers.CharField(source="evidence.status", read_only=True)
+
+    class Meta:
+        model = CorrectiveActionEvidence
+        fields = ["version", "evidence", "filename", "evidence_status", "added_by", "added_at"]
+        read_only_fields = fields
+
+
+class CorrectiveActionSerializer(serializers.ModelSerializer):
+    clause_path = serializers.CharField(source="subclause.clause_path", read_only=True)
+    assigned_username = serializers.CharField(source="assigned_to.username", read_only=True)
+    events = CorrectiveActionEventSerializer(many=True, read_only=True)
+    evidence_versions = CorrectiveActionEvidenceSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CorrectiveAction
+        fields = ["id", "subclause", "clause_path", "source_assessment", "title", "gap_summary", "remediation_plan", "assigned_to", "assigned_username", "due_date", "status", "created_by", "closed_by", "closed_at", "created_at", "updated_at", "events", "evidence_versions"]
+        read_only_fields = fields
+
+
+class CorrectiveActionConfigureSerializer(serializers.Serializer):
+    assigned_to = serializers.IntegerField()
+    due_date = serializers.DateField()
+    remediation_plan = serializers.CharField(allow_blank=False)
+
+
+class CorrectiveActionNoteSerializer(serializers.Serializer):
+    note = serializers.CharField(allow_blank=False)
+
+
+class CorrectiveActionRetestSerializer(CorrectiveActionNoteSerializer):
+    decision = serializers.ChoiceField(choices=["CLOSE", "REOPEN"])
+
+
+class CorrectiveActionEvidenceUploadSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    evidence = serializers.FileField()
 

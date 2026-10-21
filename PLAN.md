@@ -2,6 +2,32 @@
 
 ## Current work package
 
+`WP-CAPA-01` — controlled corrective-action and retest workflow.
+
+### Current bounded change: corrective action lifecycle
+
+- Create an action draft from a human auditor rejection or update request; no
+  machine preliminary finding creates a remediation obligation automatically.
+- Allow ISP owner/compliance lead to assign an accountable owner, plan and due
+  date, add immutable progress history and attach new encrypted evidence
+  versions to the related clause.
+- Allow only a tenant auditor to close or reopen an action after it reaches
+  `READY_FOR_RETEST`; action closure never changes legal-source state.
+- Add action dashboard counters for open, overdue, retest-ready and closed
+  actions, plus role-aware UI/API and audit history.
+- Acceptance: transitions, role separation, tenant isolation, evidence lineage,
+  immutable events, overdue calculation, RLS, UI, API, docs and regression
+  tests pass.
+
+Implementation status: complete in the local build. Auditor reject/request-update
+assessments create one traceable action draft; authorized users can backfill
+older gap decisions once. ISP owner/compliance users assign an owner, due date
+and remediation plan, add encrypted evidence versions/progress, and submit for
+retest. An independent auditor alone can close or reopen it. Closing a CAPA
+does not alter source verification or make a legal-compliance claim.
+
+### Previous work package
+
 `WP-AUD-02` — confirmed import of clause decisions from an auditor PDF.
 
 ### Current bounded change: auditor PDF decision import

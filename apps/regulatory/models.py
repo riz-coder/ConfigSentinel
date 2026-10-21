@@ -277,6 +277,103 @@ class AuditorReportImportRow(models.Model):
         return super().delete(*args, **kwargs)
 
 
+class CorrectiveAction(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        READY_FOR_RETEST = "READY_FOR_RETEST", "Ready for retest"
+        CLOSED = "CLOSED", "Closed by auditor"
+        REOPENED = "REOPENED", "Reopened"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="corrective_actions")
+    subclause = models.ForeignKey("SubClause", on_delete=models.PROTECT, related_name="corrective_actions")
+    source_assessment = models.OneToOneField(
+        ClauseAuditAssessment, on_delete=models.PROTECT, related_name="corrective_action"
+    )
+    title = models.CharField(max_length=255)
+    gap_summary = models.TextField()
+    remediation_plan = models.TextField(blank=True)
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="assigned_corrective_actions"
+    )
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.OPEN)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_corrective_actions")
+    closed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="closed_corrective_actions"
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["due_date", "-created_at"]
+
+    def clean(self):
+        if self.subclause_id and self.subclause.regulation.version.source.tenant_id != self.tenant_id:
+            raise ValidationError("Corrective action must remain in the source tenant.")
+        if self.source_assessment_id and self.source_assessment.tenant_id != self.tenant_id:
+            raise ValidationError("Corrective action assessment must remain in the tenant.")
+        if self.source_assessment_id and self.subclause_id and self.source_assessment.subclause_id != self.subclause_id:
+            raise ValidationError("Corrective action must reference the assessment's exact clause.")
+
+
+class CorrectiveActionEvent(models.Model):
+    class Kind(models.TextChoices):
+        CREATED = "CREATED", "Created"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        PROGRESS = "PROGRESS", "Progress update"
+        EVIDENCE_ADDED = "EVIDENCE_ADDED", "Evidence version added"
+        READY_FOR_RETEST = "READY_FOR_RETEST", "Ready for retest"
+        CLOSED = "CLOSED", "Closed"
+        REOPENED = "REOPENED", "Reopened"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    action = models.ForeignKey(CorrectiveAction, on_delete=models.PROTECT, related_name="events")
+    sequence = models.PositiveIntegerField()
+    kind = models.CharField(max_length=24, choices=Kind.choices)
+    note = models.TextField()
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="corrective_action_events")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sequence"]
+        constraints = [models.UniqueConstraint(fields=["action", "sequence"], name="unique_corrective_action_event_sequence")]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Corrective action history is append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Corrective action history is append-only.")
+
+
+class CorrectiveActionEvidence(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    action = models.ForeignKey(CorrectiveAction, on_delete=models.PROTECT, related_name="evidence_versions")
+    evidence = models.ForeignKey(ClauseEvidence, on_delete=models.PROTECT, related_name="corrective_action_versions")
+    version = models.PositiveIntegerField()
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="corrective_action_evidence")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["version"]
+        constraints = [
+            models.UniqueConstraint(fields=["action", "version"], name="unique_corrective_action_evidence_version"),
+            models.UniqueConstraint(fields=["action", "evidence"], name="unique_corrective_action_evidence"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Corrective action evidence versions are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Corrective action evidence versions are append-only.")
+
+
 class ClauseAIAnalysis(models.Model):
     """Versioned preliminary AI finding; never an auditor or legal decision."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -7,6 +7,7 @@ from .models import (
     ClauseAuditAssessment, ClauseEvidenceReview,
     AuditorReport,
     AuditorReportImport, AuditorReportImportRow,
+    CorrectiveAction, CorrectiveActionEvent, CorrectiveActionEvidence,
 )
 
 
@@ -55,7 +56,7 @@ class MappingProvenanceAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(ClauseAuditAssessment, ClauseEvidenceReview, AuditorReport, AuditorReportImport, AuditorReportImportRow)
+@admin.register(ClauseAuditAssessment, ClauseEvidenceReview, AuditorReport, AuditorReportImport, AuditorReportImportRow, CorrectiveAction, CorrectiveActionEvent, CorrectiveActionEvidence)
 class ClauseAuditProvenanceAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False

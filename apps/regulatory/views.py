@@ -24,8 +24,9 @@ from .models import (
     ClauseAuditAssessment,
     AuditorReport,
     AuditorReportImport, AuditorReportImportRow,
+    CorrectiveAction, CorrectiveActionEvent, CorrectiveActionEvidence,
 )
-from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, create_obligation, extract_auditor_report_decisions, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_mapping, review_version, update_auditor_import_row, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
+from .services import add_corrective_action_progress, analyze_clause_evidence, assess_clause, attach_corrective_action_evidence, clause_legal_ready, configure_corrective_action, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, create_missing_corrective_action_drafts, create_obligation, extract_auditor_report_decisions, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_corrective_action_retest, review_mapping, review_version, submit_for_retest, update_auditor_import_row, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
 
 
@@ -80,6 +81,9 @@ def dashboard(request):
     for color, value in zip(auditor_colors, auditor_values):
         start, auditor_cumulative = auditor_cumulative, auditor_cumulative + (value * 100 / auditor_total)
         auditor_stops.append(f"{color} {start:.2f}% {auditor_cumulative:.2f}%")
+    actions = CorrectiveAction.objects.filter(tenant=tenant)
+    action_open = actions.exclude(status=CorrectiveAction.Status.CLOSED).count()
+    action_overdue = actions.exclude(status=CorrectiveAction.Status.CLOSED).filter(due_date__lt=timezone.localdate()).count()
     return render(
         request,
         "dashboard.html",
@@ -104,6 +108,10 @@ def dashboard(request):
             "auditor_stale_count": auditor_stale_count, "auditor_not_reviewed_count": auditor_not_reviewed_count,
             "auditor_pie_gradient": ", ".join(auditor_stops),
             "auditor_report_count": AuditorReport.objects.filter(tenant=tenant).count(),
+            "action_open_count": action_open,
+            "action_overdue_count": action_overdue,
+            "action_retest_count": actions.filter(status=CorrectiveAction.Status.READY_FOR_RETEST).count(),
+            "action_closed_count": actions.filter(status=CorrectiveAction.Status.CLOSED).count(),
             "running_jobs": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).select_related("subclause__regulation")[:10],
             "completed_jobs": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).select_related("subclause__regulation")[:10],
             "sources": sources[:10],
@@ -416,6 +424,71 @@ def auditor_report_download(request, report_id):
     except PermissionDenied as exc:
         return HttpResponse(str(exc), status=403)
     return FileResponse(BytesIO(content), content_type="application/pdf", as_attachment=True, filename=report.original_filename)
+
+
+@login_required
+def corrective_action_center(request):
+    tenant = tenant_for_request(request)
+    membership = request.tenant_membership
+    if request.method == "POST":
+        try:
+            operation = request.POST.get("operation")
+            if operation == "sync_drafts":
+                count = create_missing_corrective_action_drafts(tenant=tenant, actor=request.user)
+                messages.success(request, f"{count} missing corrective-action draft(s) created from auditor gaps.")
+                return redirect("corrective-action-center")
+            action = get_object_or_404(CorrectiveAction, pk=request.POST.get("action"), tenant=tenant)
+            if operation == "configure":
+                assignee = get_user_model().objects.get(pk=request.POST.get("assigned_to"))
+                configure_corrective_action(
+                    action=action, actor=request.user, assigned_to=assignee,
+                    due_date=request.POST.get("due_date") or None,
+                    remediation_plan=request.POST.get("remediation_plan", ""),
+                )
+                messages.success(request, "Corrective action assigned and moved to in progress.")
+            elif operation == "progress":
+                add_corrective_action_progress(action=action, actor=request.user, note=request.POST.get("note", ""))
+                messages.success(request, "Progress update added to immutable action history.")
+            elif operation == "evidence":
+                upload = request.FILES.get("evidence")
+                if upload is None:
+                    raise ValidationError("Select an updated evidence file.")
+                allowed_extensions = {".pdf", ".docx", ".xlsx", ".csv", ".jpg", ".jpeg", ".png", ".txt"}
+                if not any(upload.name.lower().endswith(extension) for extension in allowed_extensions):
+                    raise ValidationError("Allowed formats: PDF, DOCX, XLSX, CSV, JPG, PNG, or TXT.")
+                attach_corrective_action_evidence(
+                    action=action, actor=request.user, title=request.POST.get("title", "Updated corrective-action evidence"),
+                    filename=upload.name, content=upload.read(),
+                )
+                messages.success(request, "New evidence version encrypted and attached to the action.")
+            elif operation == "retest":
+                submit_for_retest(action=action, actor=request.user, note=request.POST.get("note", ""))
+                messages.success(request, "Action submitted to the auditor retest queue.")
+            elif operation == "auditor_review":
+                review_corrective_action_retest(
+                    action=action, actor=request.user, decision=request.POST.get("decision", ""), note=request.POST.get("note", ""),
+                )
+                messages.success(request, "Auditor retest decision recorded.")
+            else:
+                raise ValidationError("Unknown corrective-action operation.")
+        except (get_user_model().DoesNotExist, ValidationError, PermissionDenied) as exc:
+            messages.error(request, "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc))
+        return redirect("corrective-action-center")
+    actions = CorrectiveAction.objects.filter(tenant=tenant).select_related(
+        "subclause__regulation", "source_assessment", "assigned_to", "created_by", "closed_by"
+    ).prefetch_related("events__actor", "evidence_versions__evidence", "evidence_versions__added_by")
+    assignees = Membership.objects.filter(
+        tenant=tenant, is_active=True, role__in=[Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD]
+    ).select_related("user")
+    today = timezone.localdate()
+    for action in actions:
+        action.is_overdue = bool(action.due_date and action.due_date < today and action.status != CorrectiveAction.Status.CLOSED)
+    return render(request, "regulatory/corrective_actions.html", {
+        "tenant": tenant, "membership": membership, "actions": actions, "assignees": assignees,
+        "can_manage": membership.role in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD},
+        "can_audit": membership.role == Membership.Role.AUDITOR,
+        "can_sync": membership.role in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD, Membership.Role.AUDITOR},
+    })
 
 
 @login_required

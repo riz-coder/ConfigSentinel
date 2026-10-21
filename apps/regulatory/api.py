@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied, ValidationError as DjangoValidationError
 from rest_framework import mixins, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -15,6 +16,7 @@ from .models import (
     ClauseAuditAssessment, ClauseEvidence, ClauseEvidenceReview, SubClause,
     AuditorReport,
     AuditorReportImport, AuditorReportImportRow,
+    CorrectiveAction,
 )
 from .serializers import (
     ControlDefinitionSerializer, EvidenceRequirementSerializer, ObligationControlMappingSerializer,
@@ -24,8 +26,10 @@ from .serializers import (
     ClauseAuditAssessmentCreateSerializer, ClauseEvidenceReviewCreateSerializer,
     AuditorAccountSerializer, AuditorReportSerializer, AuditorReportUploadSerializer,
     AuditorReportImportSerializer, AuditorReportImportRowSerializer, AuditorReportImportRowUpdateSerializer,
+    CorrectiveActionSerializer, CorrectiveActionConfigureSerializer, CorrectiveActionEvidenceUploadSerializer,
+    CorrectiveActionNoteSerializer, CorrectiveActionRetestSerializer,
 )
-from .services import assess_clause, compare_versions, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, extract_auditor_report_decisions, import_pack, review_clause_evidence, review_mapping, review_version, update_auditor_import_row, upload_auditor_report
+from .services import add_corrective_action_progress, assess_clause, attach_corrective_action_evidence, compare_versions, configure_corrective_action, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, create_missing_corrective_action_drafts, extract_auditor_report_decisions, import_pack, review_clause_evidence, review_corrective_action_retest, review_mapping, review_version, submit_for_retest, update_auditor_import_row, upload_auditor_report
 
 
 class TenantScopedViewSetMixin:
@@ -403,4 +407,73 @@ class AuditorReportImportRowViewSet(TenantScopedViewSetMixin, mixins.ListModelMi
         except DjangoValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(AuditorReportImportRowSerializer(row).data)
+
+
+class CorrectiveActionViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = CorrectiveActionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return CorrectiveAction.objects.filter(tenant=self.tenant()).select_related(
+            "subclause", "source_assessment", "assigned_to", "created_by", "closed_by"
+        ).prefetch_related("events__actor", "evidence_versions__evidence", "evidence_versions__added_by")
+
+    def _run(self, request, serializer_class, callback):
+        incoming = serializer_class(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        try:
+            action = callback(incoming.validated_data)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(CorrectiveActionSerializer(action).data)
+
+    @action(detail=False, methods=["post"], url_path="sync-drafts")
+    def sync_drafts(self, request):
+        try:
+            created = create_missing_corrective_action_drafts(tenant=self.tenant(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        return Response({"created": created})
+
+    @action(detail=True, methods=["post"])
+    def configure(self, request, pk=None):
+        action = self.get_object()
+        def callback(data):
+            assignee = get_user_model().objects.filter(pk=data["assigned_to"]).first()
+            if assignee is None:
+                raise DjangoValidationError("Assigned user was not found.")
+            return configure_corrective_action(action=action, actor=request.user, assigned_to=assignee, due_date=data["due_date"], remediation_plan=data["remediation_plan"])
+        return self._run(request, CorrectiveActionConfigureSerializer, callback)
+
+    @action(detail=True, methods=["post"])
+    def progress(self, request, pk=None):
+        action = self.get_object()
+        return self._run(request, CorrectiveActionNoteSerializer, lambda data: add_corrective_action_progress(action=action, actor=request.user, note=data["note"]))
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, FormParser])
+    def evidence(self, request, pk=None):
+        action = self.get_object()
+        incoming = CorrectiveActionEvidenceUploadSerializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        upload = incoming.validated_data["evidence"]
+        try:
+            attach_corrective_action_evidence(action=action, actor=request.user, title=incoming.validated_data["title"], filename=upload.name, content=upload.read())
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        action.refresh_from_db()
+        return Response(CorrectiveActionSerializer(action).data)
+
+    @action(detail=True, methods=["post"])
+    def retest(self, request, pk=None):
+        action = self.get_object()
+        return self._run(request, CorrectiveActionNoteSerializer, lambda data: submit_for_retest(action=action, actor=request.user, note=data["note"]))
+
+    @action(detail=True, methods=["post"], url_path="auditor-review")
+    def auditor_review(self, request, pk=None):
+        action = self.get_object()
+        return self._run(request, CorrectiveActionRetestSerializer, lambda data: review_corrective_action_retest(action=action, actor=request.user, decision=data["decision"], note=data["note"]))
 
