@@ -106,6 +106,79 @@ class ClauseEvidence(models.Model):
             raise ValidationError("Clause evidence must remain in the source tenant.")
 
 
+class ClauseEvidenceReview(models.Model):
+    """Immutable independent review of one active clause evidence file."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    artifact = models.OneToOneField(ClauseEvidence, on_delete=models.PROTECT, related_name="independent_review")
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="clause_evidence_reviews")
+    decision = models.CharField(max_length=20, choices=[
+        (ClauseEvidence.Status.ACCEPTED, "Accepted"),
+        (ClauseEvidence.Status.REJECTED, "Rejected"),
+    ])
+    note = models.TextField()
+    integrity_sha256 = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Clause evidence reviews are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Clause evidence reviews are append-only.")
+
+
+class ClauseAuditAssessment(models.Model):
+    """Immutable human assessment; distinct from machine and legal-source state."""
+
+    class Decision(models.TextChoices):
+        ACCEPT = "ACCEPT", "Accept evidence set"
+        REJECT = "REJECT", "Reject evidence set"
+        REQUEST_UPDATE = "REQUEST_UPDATE", "Request updated evidence"
+
+    class ComplianceStatus(models.TextChoices):
+        READY = "READY", "Ready"
+        GAP = "GAP", "Gap"
+        INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE", "Insufficient evidence"
+        LEGAL_UNVERIFIED = "LEGAL_UNVERIFIED", "Legal source unverified"
+        N_A = "N_A", "Not applicable"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="clause_audit_assessments")
+    subclause = models.ForeignKey("SubClause", on_delete=models.PROTECT, related_name="audit_assessments")
+    preliminary_analysis = models.ForeignKey(
+        "ClauseAIAnalysis", null=True, blank=True, on_delete=models.PROTECT, related_name="audit_assessments"
+    )
+    sequence = models.PositiveIntegerField()
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    compliance_status = models.CharField(max_length=32, choices=ComplianceStatus.choices)
+    note = models.TextField()
+    gaps = models.TextField(blank=True)
+    evidence_snapshot = models.JSONField(default=list)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="clause_audit_assessments")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-sequence"]
+        constraints = [
+            models.UniqueConstraint(fields=["subclause", "sequence"], name="unique_clause_audit_sequence"),
+        ]
+
+    def clean(self):
+        if self.subclause_id and self.subclause.regulation.version.source.tenant_id != self.tenant_id:
+            raise ValidationError("Clause assessment must remain in the source tenant.")
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Clause audit assessments are append-only.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Clause audit assessments are append-only.")
+
+
 class ClauseAIAnalysis(models.Model):
     """Versioned preliminary AI finding; never an auditor or legal decision."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

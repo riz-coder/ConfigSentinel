@@ -2,6 +2,48 @@
 
 ## Current work package
 
+`WP-EVID/AUD-01` — independent clause evidence review and audit dossier.
+
+### Current bounded change: auditor review and report preview
+
+- Add append-only, tenant-scoped clause assessment decisions by an independent
+  auditor: `ACCEPT`, `REJECT`, or `REQUEST_UPDATE`.
+- Keep the preliminary machine result, evidence-file status, legal-source
+  status, and auditor assessment visibly separate.
+- Require an auditor note and recorded gaps; prevent evidence uploaders from
+  reviewing their own clause evidence set.
+- Force `LEGAL_UNVERIFIED` while the source or mapping is not verified; an
+  auditor decision must never turn a pending source into legal compliance.
+- Add an auditor-room UI, role-aware API/OpenAPI surface, and a print-friendly
+  clause-by-clause report preview with immutable decision history.
+- Acceptance: tenant isolation, role enforcement, separation of duties,
+  append-only history, fail-closed legal state, report contents, and negative
+  paths have automated tests.
+- Security threats: cross-tenant object references, uploader self-review,
+  overwritten verdict history, status inflation, and sensitive evidence bytes
+  leaking into report or audit logs.
+
+Implementation status: complete in the local development build. The auditor
+room supports integrity-backed file accept/reject decisions, append-only clause
+assessment versions, evidence-change warnings, role separation, a print report,
+CSV export, API serializers/endpoints, audit events, migrations and PostgreSQL
+RLS/immutability guards. Reports contain evidence metadata and hashes, never
+decrypted evidence content.
+
+Test evidence: `manage.py test` passed 80 tests; 5 PostgreSQL-only boundary
+tests were skipped by the local SQLite environment. The focused regulatory
+suite passed 44 tests and the new auditor workflow passed 5 tests. Migration
+drift and Django system checks passed. Deployment check reports the expected six
+local-development warnings for DEBUG, HSTS, HTTPS redirect, cookie flags and
+the development secret; production Compose/environment settings remain the VPS
+deployment gate.
+
+Regulatory source status: uploaded clauses remain `SOURCE_PENDING`; therefore
+auditor assessments correctly remain `LEGAL_UNVERIFIED` until the user-supplied
+official source and exact mappings complete WP-REG dual review.
+
+### Previous work package
+
 `WP-REG-02` — source PDF intake, reviewed clause register, clause-evidence
 workflow and operational dashboard.
 

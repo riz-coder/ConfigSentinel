@@ -24,6 +24,8 @@ from apps.tenancy.models import Membership
 from .models import (
     LegalSourceStatus,
     ClauseEvidence,
+    ClauseEvidenceReview,
+    ClauseAuditAssessment,
     ClauseAIAnalysis,
     MappingReview,
     Obligation,
@@ -42,6 +44,114 @@ from .ai import analyze_clause
 
 _OCR_ENGINE = None
 _OCR_LOCK = Lock()
+
+
+def clause_legal_ready(subclause):
+    """Return whether this exact clause chain passed all legal/mapping gates."""
+    version = subclause.regulation.version
+    source = version.source
+    obligations = list(subclause.obligations.all())
+    return bool(
+        source.legal_status == LegalSourceStatus.VERIFIED
+        and version.approval_status == RegulatoryVersion.ApprovalStatus.APPROVED
+        and subclause.regulation.legal_status == LegalSourceStatus.VERIFIED
+        and subclause.legal_status == LegalSourceStatus.VERIFIED
+        and obligations
+        and all(
+            obligation.legal_status == LegalSourceStatus.VERIFIED
+            and obligation.control_mappings.filter(status=ObligationControlMapping.Status.APPROVED).exists()
+            for obligation in obligations
+        )
+    )
+
+
+@transaction.atomic
+def review_clause_evidence(*, artifact, reviewer, decision, note):
+    artifact = ClauseEvidence.objects.select_for_update().select_related("tenant", "uploaded_by").get(pk=artifact.pk)
+    membership = Membership.objects.filter(user=reviewer, tenant=artifact.tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("An active auditor membership is required.")
+    if artifact.withdrawn_at is not None or artifact.purged_at is not None:
+        raise ValidationError("Withdrawn evidence cannot be reviewed.")
+    if artifact.uploaded_by_id == reviewer.pk:
+        raise ValidationError("Evidence uploaders cannot review their own file.")
+    if hasattr(artifact, "independent_review"):
+        raise ValidationError("This evidence file already has an immutable review decision.")
+    if decision not in {ClauseEvidence.Status.ACCEPTED, ClauseEvidence.Status.REJECTED}:
+        raise ValidationError("A valid evidence decision is required.")
+    if not note.strip():
+        raise ValidationError("A review note is required.")
+    # Retrieval authenticates the encrypted object before a human decision is recorded.
+    LocalEncryptedObjectStore().retrieve_and_verify(artifact)
+    review = ClauseEvidenceReview.objects.create(
+        artifact=artifact, reviewer=reviewer, decision=decision,
+        note=note.strip(), integrity_sha256=artifact.plaintext_sha256,
+    )
+    artifact.status = decision
+    artifact.reviewed_by = reviewer
+    artifact.review_note = note.strip()
+    artifact.reviewed_at = timezone.now()
+    artifact.save(update_fields=["status", "reviewed_by", "review_note", "reviewed_at"])
+    AuditEvent.objects.create(
+        tenant=artifact.tenant, actor=reviewer, action="clause_evidence.independently_reviewed",
+        object_type="ClauseEvidence", object_id=str(artifact.id),
+        metadata={"decision": decision, "integrity_sha256": artifact.plaintext_sha256},
+    )
+    return review
+
+
+@transaction.atomic
+def assess_clause(*, subclause, reviewer, decision, note, gaps=""):
+    subclause = SubClause.objects.select_for_update().select_related(
+        "regulation__version__source"
+    ).get(pk=subclause.pk)
+    tenant = subclause.regulation.version.source.tenant
+    membership = Membership.objects.filter(user=reviewer, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("An active auditor membership is required.")
+    if decision not in ClauseAuditAssessment.Decision.values:
+        raise ValidationError("A valid clause assessment decision is required.")
+    if not note.strip():
+        raise ValidationError("An auditor conclusion is required.")
+    active = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=subclause, withdrawn_at__isnull=True).order_by("created_at"))
+    if not active:
+        raise ValidationError("The clause has no active evidence to assess.")
+    if any(item.uploaded_by_id == reviewer.pk for item in active):
+        raise ValidationError("Evidence uploaders cannot assess their own clause evidence set.")
+    if decision == ClauseAuditAssessment.Decision.ACCEPT and any(item.status != ClauseEvidence.Status.ACCEPTED for item in active):
+        raise ValidationError("Every active evidence file must be independently accepted before accepting the clause evidence set.")
+    if decision == ClauseAuditAssessment.Decision.REQUEST_UPDATE and not gaps.strip():
+        raise ValidationError("Requested evidence updates must identify the gaps.")
+
+    legal_ready = clause_legal_ready(subclause)
+    if not legal_ready:
+        compliance_status = ClauseAuditAssessment.ComplianceStatus.LEGAL_UNVERIFIED
+    elif decision == ClauseAuditAssessment.Decision.ACCEPT:
+        compliance_status = ClauseAuditAssessment.ComplianceStatus.READY
+    elif decision == ClauseAuditAssessment.Decision.REJECT:
+        compliance_status = ClauseAuditAssessment.ComplianceStatus.GAP
+    else:
+        compliance_status = ClauseAuditAssessment.ComplianceStatus.INSUFFICIENT_EVIDENCE
+
+    latest_analysis = subclause.ai_analyses.first()
+    sequence = (subclause.audit_assessments.aggregate(models.Max("sequence"))["sequence__max"] or 0) + 1
+    snapshot = [
+        {"id": str(item.id), "sha256": item.plaintext_sha256, "status": item.status, "filename": item.original_filename}
+        for item in active
+    ]
+    assessment = ClauseAuditAssessment.objects.create(
+        tenant=tenant, subclause=subclause, preliminary_analysis=latest_analysis,
+        sequence=sequence, decision=decision, compliance_status=compliance_status,
+        note=note.strip(), gaps=gaps.strip(), evidence_snapshot=snapshot, reviewer=reviewer,
+    )
+    AuditEvent.objects.create(
+        tenant=tenant, actor=reviewer, action="clause.audit_assessed",
+        object_type="ClauseAuditAssessment", object_id=str(assessment.id),
+        metadata={"clause": subclause.clause_path, "decision": decision,
+                  "compliance_status": compliance_status, "sequence": sequence,
+                  "evidence_count": len(snapshot), "legal_ready": legal_ready},
+    )
+    return assessment
 
 
 def _local_ocr(image_bytes):

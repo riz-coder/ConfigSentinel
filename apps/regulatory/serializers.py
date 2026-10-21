@@ -4,6 +4,7 @@ from .models import (
     ControlDefinition, EvidenceRequirement, MappingReview, Obligation,
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource,
     RegulatoryVersion, TestProcedure, TrustedSigningKey,
+    ClauseAuditAssessment, ClauseEvidenceReview,
 )
 
 
@@ -116,4 +117,37 @@ class ObligationControlMappingSerializer(TenantRelationSerializer):
             "status", "created_by", "created_at", "finalized_at", "reviews",
         ]
         read_only_fields = ["id", "status", "created_by", "created_at", "finalized_at", "reviews"]
+
+
+class ClauseEvidenceReviewSerializer(serializers.ModelSerializer):
+    reviewer = serializers.CharField(source="reviewer.username", read_only=True)
+    artifact_filename = serializers.CharField(source="artifact.original_filename", read_only=True)
+
+    class Meta:
+        model = ClauseEvidenceReview
+        fields = ["id", "artifact", "artifact_filename", "decision", "note", "integrity_sha256", "reviewer", "created_at"]
+        read_only_fields = fields
+
+
+class ClauseAuditAssessmentSerializer(serializers.ModelSerializer):
+    reviewer = serializers.CharField(source="reviewer.username", read_only=True)
+    clause_path = serializers.CharField(source="subclause.clause_path", read_only=True)
+
+    class Meta:
+        model = ClauseAuditAssessment
+        fields = ["id", "subclause", "clause_path", "sequence", "decision", "compliance_status", "note", "gaps", "evidence_snapshot", "preliminary_analysis", "reviewer", "created_at"]
+        read_only_fields = fields
+
+
+class ClauseEvidenceReviewCreateSerializer(serializers.Serializer):
+    artifact = serializers.UUIDField()
+    decision = serializers.ChoiceField(choices=["ACCEPTED", "REJECTED"])
+    note = serializers.CharField(allow_blank=False)
+
+
+class ClauseAuditAssessmentCreateSerializer(serializers.Serializer):
+    subclause = serializers.UUIDField()
+    decision = serializers.ChoiceField(choices=ClauseAuditAssessment.Decision.choices)
+    note = serializers.CharField(allow_blank=False)
+    gaps = serializers.CharField(required=False, allow_blank=True)
 

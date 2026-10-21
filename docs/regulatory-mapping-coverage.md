@@ -39,6 +39,15 @@ legal compliance conclusion; those decisions remain human workflows.
 JPG/JPEG/PNG files and image-only DOCX media are processed with local OCR. Only
 recognized text participates in preliminary checks; image authenticity and the
 depicted real-world event remain subject to human review.
+
+## Independent clause assessment
+
+`WP-EVID/AUD-01` adds an independent auditor layer after preliminary analysis.
+Each active file receives a hash-verified accept/reject decision, followed by a
+versioned clause assessment. The assessment snapshots evidence hashes and is
+shown as stale if files are later added or withdrawn. Source verification,
+machine analysis, evidence-file state, and clause compliance state remain
+separate; pending source or mapping gates force `LEGAL_UNVERIFIED`.
 For source text that explicitly names a controlled document type, the engine
 also reports document presence, governance markers (purpose, scope, ownership,
 approval, version and review/effective date), and potential coverage of exact

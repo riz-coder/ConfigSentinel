@@ -4,6 +4,7 @@ from .models import (
     ControlDefinition, EvidenceRequirement, MappingReview, Obligation, ObligationControlMapping,
     Regulation, RegulatoryImportBatch, RegulatoryReview, RegulatorySource, RegulatoryVersion,
     SubClause, TestProcedure, TrustedSigningKey,
+    ClauseAuditAssessment, ClauseEvidenceReview,
 )
 
 
@@ -42,6 +43,18 @@ admin.site.register(EvidenceRequirement)
 
 @admin.register(ObligationControlMapping, MappingReview)
 class MappingProvenanceAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ClauseAuditAssessment, ClauseEvidenceReview)
+class ClauseAuditProvenanceAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 

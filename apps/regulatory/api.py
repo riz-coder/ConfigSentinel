@@ -12,13 +12,16 @@ from .models import (
     ControlDefinition, EvidenceRequirement, MappingReview, ObligationControlMapping,
     Regulation, RegulatoryReview, RegulatorySource, RegulatoryVersion, TestProcedure,
     TrustedSigningKey,
+    ClauseAuditAssessment, ClauseEvidence, ClauseEvidenceReview, SubClause,
 )
 from .serializers import (
     ControlDefinitionSerializer, EvidenceRequirementSerializer, ObligationControlMappingSerializer,
     RegulationSerializer, RegulatorySourceSerializer, RegulatoryVersionSerializer,
     TestProcedureSerializer, TrustedSigningKeySerializer,
+    ClauseAuditAssessmentSerializer, ClauseEvidenceReviewSerializer,
+    ClauseAuditAssessmentCreateSerializer, ClauseEvidenceReviewCreateSerializer,
 )
-from .services import compare_versions, coverage_report, create_mapping, import_pack, review_mapping, review_version
+from .services import assess_clause, compare_versions, coverage_report, create_mapping, import_pack, review_clause_evidence, review_mapping, review_version
 
 
 class TenantScopedViewSetMixin:
@@ -232,4 +235,59 @@ class ObligationControlMappingViewSet(TenantScopedViewSetMixin, mixins.ListModel
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         mapping.refresh_from_db()
         return Response(self.get_serializer(mapping).data)
+
+
+class ClauseEvidenceReviewViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = ClauseEvidenceReviewSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        return ClauseEvidenceReviewCreateSerializer if self.action == "create" else ClauseEvidenceReviewSerializer
+
+    def get_queryset(self):
+        return ClauseEvidenceReview.objects.filter(artifact__tenant=self.tenant()).select_related("artifact", "reviewer")
+
+    def create(self, request):
+        incoming = self.get_serializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        artifact = ClauseEvidence.objects.filter(pk=incoming.validated_data["artifact"], tenant=self.tenant()).first()
+        if artifact is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            review = review_clause_evidence(
+                artifact=artifact, reviewer=request.user, decision=incoming.validated_data["decision"], note=incoming.validated_data["note"],
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ClauseEvidenceReviewSerializer(review).data, status=status.HTTP_201_CREATED)
+
+
+class ClauseAuditAssessmentViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = ClauseAuditAssessmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        return ClauseAuditAssessmentCreateSerializer if self.action == "create" else ClauseAuditAssessmentSerializer
+
+    def get_queryset(self):
+        return ClauseAuditAssessment.objects.filter(tenant=self.tenant()).select_related("subclause", "reviewer", "preliminary_analysis")
+
+    def create(self, request):
+        incoming = self.get_serializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        clause = SubClause.objects.filter(pk=incoming.validated_data["subclause"], regulation__version__source__tenant=self.tenant()).first()
+        if clause is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            assessment = assess_clause(
+                subclause=clause, reviewer=request.user, decision=incoming.validated_data["decision"],
+                note=incoming.validated_data["note"], gaps=incoming.validated_data.get("gaps", ""),
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ClauseAuditAssessmentSerializer(assessment).data, status=status.HTTP_201_CREATED)
 

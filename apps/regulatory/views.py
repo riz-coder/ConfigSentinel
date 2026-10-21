@@ -6,6 +6,8 @@ from django.db import close_old_connections
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
+from django.http import HttpResponse
+import csv
 from threading import Thread
 
 from apps.tenancy.access import tenant_for_request
@@ -18,8 +20,9 @@ from .models import (
     ControlDefinition, EvidenceRequirement, LegalSourceStatus, MappingReview, Obligation,
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
+    ClauseAuditAssessment,
 )
-from .services import analyze_clause_evidence, coverage_report, create_mapping, create_obligation, extract_source_regulations, import_pack, review_mapping, review_version, update_source_metadata, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
+from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, coverage_report, create_mapping, create_obligation, extract_source_regulations, import_pack, review_clause_evidence, review_mapping, review_version, update_source_metadata, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
 
 
@@ -280,5 +283,92 @@ def mapping_center(request):
             "obligation", "control", "test_procedure", "evidence_requirement", "created_by",
         ).prefetch_related("reviews__reviewer"),
         "review_kind": MappingReview.Kind.LEGAL if membership.role == Membership.Role.LEGAL_REVIEWER else MappingReview.Kind.COMPLIANCE if membership.role == Membership.Role.COMPLIANCE_LEAD else "",
+    })
+
+
+def _audit_clauses(tenant):
+    sources = RegulatorySource.objects.filter(tenant=tenant).exclude(title__startswith="Framework source")
+    clauses = list(
+        SubClause.objects.filter(regulation__version__source__in=sources)
+        .select_related("regulation__version__source")
+        .prefetch_related("obligations__control_mappings", "submitted_evidence__uploaded_by", "submitted_evidence__independent_review__reviewer", "ai_analyses", "audit_assessments__reviewer")
+        .order_by("regulation__number", "clause_path")
+    )
+    for clause in clauses:
+        clause.active_evidence = [item for item in clause.submitted_evidence.all() if item.withdrawn_at is None]
+        clause.latest_assessment = clause.audit_assessments.all()[0] if clause.audit_assessments.all() else None
+        clause.legal_ready = clause_legal_ready(clause)
+        current_hashes = sorted(item.plaintext_sha256 for item in clause.active_evidence)
+        recorded_hashes = sorted(item["sha256"] for item in (clause.latest_assessment.evidence_snapshot if clause.latest_assessment else []))
+        clause.assessment_stale = bool(clause.latest_assessment and current_hashes != recorded_hashes)
+    return clauses
+
+
+@login_required
+def auditor_room(request):
+    tenant = tenant_for_request(request)
+    membership = request.tenant_membership
+    if request.method == "POST":
+        try:
+            if membership.role != Membership.Role.AUDITOR:
+                raise PermissionDenied("Only an assigned auditor may record independent decisions.")
+            operation = request.POST.get("operation")
+            if operation == "review_file":
+                artifact = get_object_or_404(ClauseEvidence, pk=request.POST.get("evidence"), tenant=tenant)
+                review_clause_evidence(
+                    artifact=artifact, reviewer=request.user,
+                    decision=request.POST.get("decision"), note=request.POST.get("note", ""),
+                )
+                messages.success(request, "Immutable evidence-file review recorded.")
+            elif operation == "assess_clause":
+                clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                assessment = assess_clause(
+                    subclause=clause, reviewer=request.user, decision=request.POST.get("decision"),
+                    note=request.POST.get("note", ""), gaps=request.POST.get("gaps", ""),
+                )
+                messages.success(request, f"Clause assessment v{assessment.sequence} recorded as {assessment.compliance_status}.")
+            else:
+                raise ValidationError("Unknown auditor operation.")
+        except (ValidationError, PermissionDenied) as exc:
+            messages.error(request, "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc))
+        return redirect("auditor-room")
+    return render(request, "regulatory/auditor_room.html", {
+        "tenant": tenant, "membership": membership, "clauses": _audit_clauses(tenant),
+        "can_review": membership.role == Membership.Role.AUDITOR,
+        "evidence_decisions": [ClauseEvidence.Status.ACCEPTED, ClauseEvidence.Status.REJECTED],
+        "assessment_decisions": ClauseAuditAssessment.Decision.choices,
+    })
+
+
+@login_required
+def audit_report(request):
+    tenant = tenant_for_request(request)
+    clauses = _audit_clauses(tenant)
+    if request.GET.get("format") == "csv":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="assurance-review-report.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Clause", "Title", "Legal source", "Auditor status", "Decision", "Evidence files", "Conclusion", "Gaps", "Reviewed by", "Reviewed at", "Superseded by evidence change"])
+        for clause in clauses:
+            assessment = clause.latest_assessment
+            writer.writerow([
+                clause.clause_path, clause.title, clause.legal_status,
+                assessment.compliance_status if assessment else "NOT_REVIEWED",
+                assessment.decision if assessment else "", len(clause.active_evidence),
+                assessment.note if assessment else "", assessment.gaps if assessment else "",
+                assessment.reviewer.username if assessment else "",
+                assessment.created_at.isoformat() if assessment else "", clause.assessment_stale,
+            ])
+        return response
+    counts = {status: 0 for status in ClauseAuditAssessment.ComplianceStatus.values}
+    not_reviewed = 0
+    for clause in clauses:
+        if clause.latest_assessment:
+            counts[clause.latest_assessment.compliance_status] += 1
+        else:
+            not_reviewed += 1
+    return render(request, "regulatory/audit_report.html", {
+        "tenant": tenant, "clauses": clauses, "counts": counts, "not_reviewed": not_reviewed,
+        "generated_at": timezone.now(),
     })
 
