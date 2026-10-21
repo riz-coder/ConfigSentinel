@@ -83,6 +83,17 @@ class InventoryFoundationTests(TestCase):
         with self.assertRaisesMessage(ValidationError, "Rows 2-3: Required values are blank: name"):
             import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows))
 
+    def test_business_owner_roles_are_preserved_without_workspace_accounts(self):
+        rows = standard_template_rows(self.owner.username)[:1]
+        rows[0]["asset_owner"] = "IP-NOC"
+        rows[0]["custodian_responsible_person"] = "Network Operations"
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows)), 1)
+        asset = Asset.objects.get(asset_tag="NET-CORE-001")
+        self.assertEqual(asset.declared_owner, "IP-NOC")
+        self.assertEqual(asset.declared_custodian, "Network Operations")
+        self.assertEqual(asset.owner, self.owner)
+        self.assertEqual(asset.custodian, self.owner)
+
     def test_template_csv_has_fixed_policy_columns_and_three_examples(self):
         rows = list(csv.DictReader(io.StringIO(asset_template_csv(self.owner.username).decode("utf-8-sig"))))
         self.assertEqual(list(rows[0]), TEMPLATE_COLUMNS)

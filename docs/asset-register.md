@@ -32,3 +32,8 @@ The acquisition, last-review and next-review dates accept blank values when
 they are genuinely unknown. They remain inventory data-quality gaps instead
 of blocking every row. Repeated validation failures are grouped into compact
 row ranges rather than rendering one duplicate message per row.
+
+Imported owner and custodian values may identify a person, team or operational
+role; they are preserved verbatim. When they do not match a workspace account,
+the authenticated importer is recorded as the accountable system actor without
+rewriting the source-register value.

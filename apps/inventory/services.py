@@ -192,6 +192,14 @@ def _member_user(*, tenant, value, label):
     return matches[0]
 
 
+def _member_user_or_actor(*, tenant, value, actor):
+    """Resolve a workspace user when possible without treating business roles as logins."""
+    try:
+        return _member_user(tenant=tenant, value=value, label="Accountability")
+    except ValidationError:
+        return actor
+
+
 def _date_value(value, *, required=False):
     if isinstance(value, datetime):
         return value.date()
@@ -260,7 +268,7 @@ def asset_template_xlsx(username):
     instructions.append(["ConfigSentinel Asset Register Template"])
     instructions.append(["Do not rename or remove columns. Replace the three EXAMPLE rows with actual tenant assets."])
     instructions.append(["Dates use YYYY-MM-DD and may be blank when genuinely unknown. Classification: CRITICAL/HIGH/MEDIUM/LOW. Current status: PLANNED/ACTIVE/MAINTENANCE/RETIRED. CII asset: YES/NO."])
-    instructions.append(["Owner and custodian must match an active workspace username, email or full name. site_code/service_code may remain blank until those records exist."])
+    instructions.append(["Owner and custodian may be a person, team or role from the source register. If no workspace account matches, the importer remains the accountable system user. site_code/service_code may remain blank until those records exist."])
     output = io.BytesIO(); workbook.save(output); return output.getvalue()
 
 
@@ -291,8 +299,8 @@ def import_assets_file(*, tenant, actor, filename, content):
             blank_required = sorted(field for field in REQUIRED_VALUE_FIELDS if not row.get(field, "").strip())
             if blank_required:
                 raise ValidationError("Required values are blank: " + ", ".join(blank_required))
-            owner = _member_user(tenant=tenant, value=row["owner_username"], label="Owner")
-            custodian = _member_user(tenant=tenant, value=row["custodian_username"], label="Custodian")
+            owner = _member_user_or_actor(tenant=tenant, value=row["owner_username"], actor=actor)
+            custodian = _member_user_or_actor(tenant=tenant, value=row["custodian_username"], actor=actor)
             site_code, service_code = row.get("site_code", "").strip(), row.get("service_code", "").strip()
             site = Site.objects.filter(tenant=tenant).filter(models.Q(code__iexact=site_code) | models.Q(name__iexact=site_code)).first() if site_code else None
             service = CriticalService.objects.filter(tenant=tenant).filter(models.Q(code__iexact=service_code) | models.Q(name__iexact=service_code)).first() if service_code else None
@@ -308,7 +316,7 @@ def import_assets_file(*, tenant, actor, filename, content):
             criticality = _enum(row["criticality"], CriticalService.Criticality.choices)
             classification = _enum(row.get("classification", "INTERNAL"), Asset.Classification.choices)
             lifecycle = _enum(row.get("lifecycle", "ACTIVE"), Asset.Lifecycle.choices)
-            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], description=row["description"], kind=kind, business_function=row["business_function"], owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row["is_cii"].lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), physical_location=row["physical_location"], logical_network_location=row["logical_network_location"], acquired_on=_date_value(row["acquired_on"]), end_of_support=_date_value(row.get("end_of_support")), end_of_life=_date_value(row.get("end_of_life")), decommissioning_plan=row["decommissioning_plan"], asset_value=row["asset_value"], risk_rating=row["risk_rating"], associated_security_controls=row["associated_security_controls"], data_stored_or_processed=row["data_stored_or_processed"], backup_recovery_status=row["backup_recovery_status"], linked_systems_dependencies=row["linked_systems_dependencies"], licensing_warranty_information=row["licensing_warranty_information"], source_reference=row.get("source_reference", ""), last_reviewed_on=_date_value(row["last_reviewed_on"]), review_due_at=_date_value(row["review_due_at"]), created_by=actor)
+            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], description=row["description"], kind=kind, business_function=row["business_function"], owner=owner, custodian=custodian, declared_owner=row["owner_username"], declared_custodian=row["custodian_username"], criticality=criticality, site=site, service=service, is_cii=row["is_cii"].lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), physical_location=row["physical_location"], logical_network_location=row["logical_network_location"], acquired_on=_date_value(row["acquired_on"]), end_of_support=_date_value(row.get("end_of_support")), end_of_life=_date_value(row.get("end_of_life")), decommissioning_plan=row["decommissioning_plan"], asset_value=row["asset_value"], risk_rating=row["risk_rating"], associated_security_controls=row["associated_security_controls"], data_stored_or_processed=row["data_stored_or_processed"], backup_recovery_status=row["backup_recovery_status"], linked_systems_dependencies=row["linked_systems_dependencies"], licensing_warranty_information=row["licensing_warranty_information"], source_reference=row.get("source_reference", ""), last_reviewed_on=_date_value(row["last_reviewed_on"]), review_due_at=_date_value(row["review_due_at"]), created_by=actor)
             obj.full_clean()
             rows.append(obj)
         except Exception as exc:

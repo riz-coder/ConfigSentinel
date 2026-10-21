@@ -26,8 +26,10 @@ The UI now provides fixed-column CSV/XLSX templates with three example rows;
 the columns cover every minimum attribute category transcribed from Regulation
 11(3) of the uploaded source copy while retaining `SOURCE_PENDING` status.
 Unknown acquisition/review dates no longer block a batch import, and repeated
-row failures are compacted into readable row ranges. Focused inventory tests
-passed 11/11; the earlier full suite passed 101 tests with 6
+row failures are compacted into readable row ranges. Business owner/custodian
+names and roles are preserved without requiring matching login accounts; the
+authenticated importer remains the accountable system actor. Focused inventory tests
+passed 12/12; the earlier full suite passed 101 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 

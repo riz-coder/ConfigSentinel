@@ -17,3 +17,8 @@ The schema retains the minimum attribute categories transcribed from Regulation
 11(3) of the uploaded source copy. Fixed-column CSV/XLSX templates provide
 examples and imports fail atomically when required data is absent. This does
 not mark the source or mapping `VERIFIED`.
+
+Source-register owner and custodian text is stored separately from application
+accountability. A matching active tenant user is linked when available;
+otherwise the authenticated importer is linked while the original person,
+team or role remains unchanged and visible.

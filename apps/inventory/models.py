@@ -103,6 +103,8 @@ class Asset(models.Model):
     service = models.ForeignKey(CriticalService, null=True, blank=True, on_delete=models.PROTECT, related_name="assets")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_assets")
     custodian = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="custodied_assets")
+    declared_owner = models.CharField(max_length=200, blank=True)
+    declared_custodian = models.CharField(max_length=200, blank=True)
     criticality = models.CharField(max_length=12, choices=CriticalService.Criticality.choices)
     classification = models.CharField(max_length=16, choices=Classification.choices, default=Classification.INTERNAL)
     lifecycle = models.CharField(max_length=16, choices=Lifecycle.choices, default=Lifecycle.ACTIVE)
