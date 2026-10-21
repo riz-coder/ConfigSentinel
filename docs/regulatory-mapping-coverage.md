@@ -48,6 +48,9 @@ versioned clause assessment. The assessment snapshots evidence hashes and is
 shown as stale if files are later added or withdrawn. Source verification,
 machine analysis, evidence-file state, and clause compliance state remain
 separate; pending source or mapping gates force `LEGAL_UNVERIFIED`.
+Auditor PDF imports retain the exact report hash and human-reported status, but
+they do not bypass this gate. `Compliant` in an external report is displayed as
+`LEGAL_UNVERIFIED` until the referenced source and mappings are verified.
 For source text that explicitly names a controlled document type, the engine
 also reports document presence, governance markers (purpose, scope, ownership,
 approval, version and review/effective date), and potential coverage of exact

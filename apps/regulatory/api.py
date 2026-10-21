@@ -14,6 +14,7 @@ from .models import (
     TrustedSigningKey,
     ClauseAuditAssessment, ClauseEvidence, ClauseEvidenceReview, SubClause,
     AuditorReport,
+    AuditorReportImport, AuditorReportImportRow,
 )
 from .serializers import (
     ControlDefinitionSerializer, EvidenceRequirementSerializer, ObligationControlMappingSerializer,
@@ -22,8 +23,9 @@ from .serializers import (
     ClauseAuditAssessmentSerializer, ClauseEvidenceReviewSerializer,
     ClauseAuditAssessmentCreateSerializer, ClauseEvidenceReviewCreateSerializer,
     AuditorAccountSerializer, AuditorReportSerializer, AuditorReportUploadSerializer,
+    AuditorReportImportSerializer, AuditorReportImportRowSerializer, AuditorReportImportRowUpdateSerializer,
 )
-from .services import assess_clause, compare_versions, coverage_report, create_auditor_account, create_mapping, import_pack, review_clause_evidence, review_mapping, review_version, upload_auditor_report
+from .services import assess_clause, compare_versions, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, extract_auditor_report_decisions, import_pack, review_clause_evidence, review_mapping, review_version, update_auditor_import_row, upload_auditor_report
 
 
 class TenantScopedViewSetMixin:
@@ -346,4 +348,59 @@ class AuditorReportViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixi
         except DjangoValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(AuditorReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def extract(self, request, pk=None):
+        try:
+            batch = extract_auditor_report_decisions(report=self.get_object(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(AuditorReportImportSerializer(batch).data, status=status.HTTP_201_CREATED)
+
+
+class AuditorReportImportViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = AuditorReportImportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return AuditorReportImport.objects.filter(report__tenant=self.tenant()).select_related("report", "created_by", "confirmed_by").prefetch_related("rows__subclause", "rows__confirmed_assessment")
+
+    @action(detail=True, methods=["post"])
+    def confirm(self, request, pk=None):
+        try:
+            batch = confirm_auditor_report_import(batch=self.get_object(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(batch).data)
+
+
+class AuditorReportImportRowViewSet(TenantScopedViewSetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        return AuditorReportImportRowUpdateSerializer if self.action == "update" else AuditorReportImportRowSerializer
+
+    def get_queryset(self):
+        return AuditorReportImportRow.objects.filter(batch__report__tenant=self.tenant()).select_related("batch__report", "subclause", "confirmed_assessment")
+
+    def update(self, request, pk=None):
+        incoming = self.get_serializer(data=request.data)
+        incoming.is_valid(raise_exception=True)
+        clause = SubClause.objects.filter(pk=incoming.validated_data["subclause"], regulation__version__source__tenant=self.tenant()).first()
+        if clause is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            row = update_auditor_import_row(
+                row=self.get_object(), actor=request.user, subclause=clause,
+                reported_status=incoming.validated_data["reported_status"], remarks=incoming.validated_data["remarks"],
+            )
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(AuditorReportImportRowSerializer(row).data)
 

@@ -1,6 +1,7 @@
 import base64
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -9,8 +10,8 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from apps.tenancy.models import Membership, Tenant
 
-from .models import AuditorReport, ClauseAuditAssessment, ClauseEvidence, Regulation, RegulatorySource, RegulatoryVersion, SubClause
-from .services import assess_clause, create_auditor_account, review_clause_evidence, upload_auditor_report, upload_clause_evidence
+from .models import AuditorReport, AuditorReportImport, AuditorReportImportRow, ClauseAuditAssessment, ClauseEvidence, Regulation, RegulatorySource, RegulatoryVersion, SubClause
+from .services import assess_clause, confirm_auditor_report_import, create_auditor_account, extract_auditor_report_decisions, review_clause_evidence, update_auditor_import_row, upload_auditor_report, upload_clause_evidence
 
 
 class ClauseAuditorWorkflowTests(TestCase):
@@ -167,3 +168,99 @@ class ClauseAuditorWorkflowTests(TestCase):
         response = self.client.get("/")
         self.assertContains(response, "Independent auditor distribution")
         self.assertEqual(response.context["auditor_legal_unverified_count"], 1)
+
+    def _report_with_extracted_text(self, text):
+        report = upload_auditor_report(
+            tenant=self.tenant, actor=self.auditor, title="On-site clause matrix",
+            filename="onsite-matrix.pdf", content=b"%PDF-1.4 synthetic",
+        )
+
+        class Page:
+            def extract_text(self):
+                return text
+
+        class Reader:
+            is_encrypted = False
+            pages = [Page()]
+
+        with patch("apps.regulatory.services.PdfReader", return_value=Reader()):
+            return report, extract_auditor_report_decisions(report=report, actor=self.auditor)
+
+    def test_pdf_rows_require_preview_before_confirming_immutable_assessments(self):
+        version = self.clause.regulation.version
+        regulation2 = Regulation.objects.create(version=version, number=2, title="Second", source_page="2", source_excerpt="Source")
+        SubClause.objects.create(regulation=regulation2, clause_path="2", title="Second", source_page="2")
+        report, batch = self._report_with_extracted_text(
+            "Clause 1 | Compliant | Control was verified on site.\n"
+            "Clause 2 - Non-Compliant - Approval record was missing."
+        )
+
+        self.assertEqual(batch.status, AuditorReportImport.Status.READY)
+        self.assertEqual(batch.rows.count(), 2)
+        self.assertEqual(ClauseAuditAssessment.objects.count(), 0)
+
+        confirm_auditor_report_import(batch=batch, actor=self.auditor)
+        batch.refresh_from_db()
+        assessments = ClauseAuditAssessment.objects.filter(auditor_report=report)
+        self.assertEqual(batch.status, AuditorReportImport.Status.CONFIRMED)
+        self.assertEqual(assessments.count(), 2)
+        self.assertSetEqual(set(assessments.values_list("reported_status", flat=True)), {"COMPLIANT", "NON_COMPLIANT"})
+        self.assertTrue(all(item.compliance_status == ClauseAuditAssessment.ComplianceStatus.LEGAL_UNVERIFIED for item in assessments))
+        with self.assertRaisesMessage(ValidationError, "already confirmed"):
+            confirm_auditor_report_import(batch=batch, actor=self.auditor)
+
+    def test_unmatched_pdf_row_is_corrected_before_confirmation(self):
+        _, batch = self._report_with_extracted_text(
+            "Clause 999 | Partial | Annual test proof needs an update."
+        )
+        row = batch.rows.get()
+        self.assertTrue(row.validation_error)
+        with self.assertRaisesMessage(ValidationError, "Resolve every"):
+            confirm_auditor_report_import(batch=batch, actor=self.auditor)
+
+        update_auditor_import_row(
+            row=row, actor=self.auditor, subclause=self.clause,
+            reported_status=AuditorReportImportRow.ReportedStatus.PARTIAL,
+            remarks="Annual test proof needs an update.",
+        )
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, AuditorReportImport.Status.READY)
+        confirm_auditor_report_import(batch=batch, actor=self.auditor)
+        assessment = self.clause.audit_assessments.first()
+        self.assertEqual(assessment.reported_status, AuditorReportImportRow.ReportedStatus.PARTIAL)
+        self.assertEqual(assessment.decision, ClauseAuditAssessment.Decision.REQUEST_UPDATE)
+
+    def test_report_parser_rejects_non_auditor_and_unsupported_layout(self):
+        report = upload_auditor_report(
+            tenant=self.tenant, actor=self.auditor, title="Report", filename="report.pdf",
+            content=b"%PDF-1.4 synthetic",
+        )
+        with self.assertRaises(PermissionDenied):
+            extract_auditor_report_decisions(report=report, actor=self.owner)
+
+        class EmptyReader:
+            is_encrypted = False
+            pages = []
+
+        with patch("apps.regulatory.services.PdfReader", return_value=EmptyReader()):
+            batch = extract_auditor_report_decisions(report=report, actor=self.auditor)
+        self.assertEqual(batch.status, AuditorReportImport.Status.ERROR)
+        self.assertEqual(batch.rows.count(), 0)
+
+    def test_multiline_pdf_table_layout_is_extracted(self):
+        _, batch = self._report_with_extracted_text(
+            "Clause 1\nPartially Compliant\nAnnual evidence was incomplete."
+        )
+        row = batch.rows.get()
+        self.assertEqual(row.raw_clause_reference, "1")
+        self.assertEqual(row.reported_status, AuditorReportImportRow.ReportedStatus.PARTIAL)
+        self.assertEqual(row.remarks, "Annual evidence was incomplete.")
+
+        self.client.force_login(self.auditor)
+        device = TOTPDevice.objects.create(user=self.auditor, name="import-preview", confirmed=True)
+        session = self.client.session
+        session["otp_device_id"] = device.persistent_id
+        session.save()
+        response = self.client.get("/auditor/")
+        self.assertContains(response, "Confirm all reviewed rows")
+        self.assertContains(response, "Annual evidence was incomplete.")

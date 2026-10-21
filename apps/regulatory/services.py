@@ -29,6 +29,8 @@ from .models import (
     ClauseEvidenceReview,
     ClauseAuditAssessment,
     AuditorReport,
+    AuditorReportImport,
+    AuditorReportImportRow,
     ClauseAIAnalysis,
     MappingReview,
     Obligation,
@@ -126,6 +128,214 @@ def retrieve_auditor_report(*, report, actor):
         metadata={"sha256": report.plaintext_sha256},
     )
     return content
+
+
+_AUDITOR_ROW = re.compile(
+    r"^\s*(?:clause|regulation|reg\.?|r)?\s*(?P<clause>\d+(?:[.][\w()-]+)*)\s*"
+    r"(?:[|:;\-–—]\s*|\s+)"
+    r"(?P<status>not\s+applicable|n\s*/?\s*a|non[\s-]*compliant|partially?\s+compliant|partial|compliant)"
+    r"(?:\s*[|:;\-–—]\s*|\s+)(?P<remarks>.+?)\s*$",
+    re.IGNORECASE,
+)
+_AUDITOR_BLOCK = re.compile(
+    r"(?:^|\n)\s*(?:clause|regulation|reg\.?|r)\s*(?P<clause>\d+(?:[.][\w()-]+)*)\s*"
+    r"(?:[|:;\-–—]\s*|\s+)"
+    r"(?P<status>not\s+applicable|n\s*/?\s*a|non[\s-]*compliant|partially?\s+compliant|partial|compliant)"
+    r"(?:\s*[|:;\-–—]\s*|\s+)(?P<remarks>.*?)"
+    r"(?=\n\s*(?:clause|regulation|reg\.?|r)\s*\d+(?:[.][\w()-]+)*\b|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _normalized_report_status(value):
+    normalized = re.sub(r"[\s-]+", " ", value.strip().lower())
+    if normalized in {"not applicable", "n / a", "n/a", "na"}:
+        return AuditorReportImportRow.ReportedStatus.NOT_APPLICABLE
+    if normalized == "compliant":
+        return AuditorReportImportRow.ReportedStatus.COMPLIANT
+    if normalized in {"partial", "partially compliant", "partial compliant"}:
+        return AuditorReportImportRow.ReportedStatus.PARTIAL
+    return AuditorReportImportRow.ReportedStatus.NON_COMPLIANT
+
+
+def _extract_auditor_rows(pdf_bytes):
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+        if reader.is_encrypted:
+            raise ValidationError("The auditor PDF is encrypted and cannot be extracted.")
+        lines = []
+        for page in reader.pages:
+            lines.extend((page.extract_text() or "").splitlines())
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise ValidationError("The auditor PDF text could not be extracted.") from exc
+    rows = []
+    for line in lines:
+        match = _AUDITOR_ROW.match(" ".join(line.split()))
+        if match:
+            rows.append({
+                "clause": match.group("clause"),
+                "status": _normalized_report_status(match.group("status")),
+                "remarks": match.group("remarks").strip(),
+            })
+    if not rows:
+        text = "\n".join(lines)
+        for match in _AUDITOR_BLOCK.finditer(text):
+            remarks = " ".join(match.group("remarks").split())
+            if remarks:
+                rows.append({
+                    "clause": match.group("clause"),
+                    "status": _normalized_report_status(match.group("status")),
+                    "remarks": remarks,
+                })
+    return rows
+
+
+@transaction.atomic
+def extract_auditor_report_decisions(*, report, actor):
+    report = AuditorReport.objects.select_for_update().select_related("tenant", "uploaded_by").get(pk=report.pk)
+    membership = Membership.objects.filter(user=actor, tenant=report.tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("Only an assigned auditor may extract their report decisions.")
+    if hasattr(report, "decision_import"):
+        raise ValidationError("This report already has a decision import draft.")
+    extracted = _extract_auditor_rows(LocalEncryptedObjectStore().retrieve_and_verify(report))
+    batch = AuditorReportImport.objects.create(
+        report=report, created_by=actor,
+        status=AuditorReportImport.Status.DRAFT if extracted else AuditorReportImport.Status.ERROR,
+        extraction_note="" if extracted else "No supported clause/status/remarks rows were found. Upload a text-readable PDF using a supported row format.",
+    )
+    clauses = list(SubClause.objects.filter(regulation__version__source__tenant=report.tenant).select_related("regulation"))
+    by_path = {}
+    for clause in clauses:
+        by_path.setdefault(clause.clause_path.strip().lower(), []).append(clause)
+    seen = set()
+    for number, item in enumerate(extracted, start=1):
+        matches = by_path.get(item["clause"].strip().lower(), [])
+        error = ""
+        matched = matches[0] if len(matches) == 1 else None
+        if not matches:
+            error = "Clause reference was not found in this tenant framework."
+        elif len(matches) > 1:
+            error = "Clause reference is ambiguous across uploaded framework versions."
+        elif matched.pk in seen:
+            error = "Duplicate clause reference in the auditor report."
+            matched = None
+        if matched:
+            seen.add(matched.pk)
+        AuditorReportImportRow.objects.create(
+            batch=batch, row_number=number, raw_clause_reference=item["clause"],
+            reported_status=item["status"], remarks=item["remarks"],
+            subclause=matched, validation_error=error,
+        )
+    if extracted and not batch.rows.filter(validation_error__gt="").exists():
+        batch.status = AuditorReportImport.Status.READY
+        batch.save(update_fields=["status"])
+    AuditEvent.objects.create(
+        tenant=report.tenant, actor=actor, action="auditor.report_decisions_extracted",
+        object_type="AuditorReportImport", object_id=str(batch.id),
+        metadata={"report_sha256": report.plaintext_sha256, "row_count": len(extracted), "status": batch.status},
+    )
+    return batch
+
+
+@transaction.atomic
+def update_auditor_import_row(*, row, actor, subclause, reported_status, remarks):
+    row = AuditorReportImportRow.objects.select_for_update().select_related("batch__report__tenant").get(pk=row.pk)
+    tenant = row.batch.report.tenant
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("Only an assigned auditor may correct report rows.")
+    if row.batch.status == AuditorReportImport.Status.CONFIRMED:
+        raise ValidationError("Confirmed report decisions cannot be changed.")
+    if subclause.regulation.version.source.tenant_id != tenant.id:
+        raise PermissionDenied("The selected clause is not available in this tenant.")
+    if reported_status not in AuditorReportImportRow.ReportedStatus.values:
+        raise ValidationError("Select a valid auditor-reported status.")
+    if not remarks.strip():
+        raise ValidationError("Auditor remarks are required.")
+    duplicate = row.batch.rows.exclude(pk=row.pk).filter(subclause=subclause).exists()
+    row.subclause = subclause
+    row.raw_clause_reference = subclause.clause_path
+    row.reported_status = reported_status
+    row.remarks = remarks.strip()
+    row.validation_error = "Duplicate clause selection." if duplicate else ""
+    row.save()
+    # Re-evaluate duplicate errors across the complete editable batch.
+    for candidate in row.batch.rows.select_related("subclause"):
+        if candidate.pk == row.pk:
+            continue
+        is_duplicate = candidate.subclause_id and row.batch.rows.exclude(pk=candidate.pk).filter(subclause_id=candidate.subclause_id).exists()
+        expected = "Duplicate clause selection." if is_duplicate else ""
+        if candidate.validation_error != expected:
+            candidate.validation_error = expected
+            candidate.save(update_fields=["validation_error"])
+    ready = row.batch.rows.exists() and not row.batch.rows.filter(models.Q(subclause__isnull=True) | ~models.Q(validation_error="")).exists()
+    row.batch.status = AuditorReportImport.Status.READY if ready else AuditorReportImport.Status.DRAFT
+    row.batch.save(update_fields=["status"])
+    return row
+
+
+@transaction.atomic
+def confirm_auditor_report_import(*, batch, actor):
+    batch = AuditorReportImport.objects.select_for_update().select_related("report__tenant").get(pk=batch.pk)
+    tenant = batch.report.tenant
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role != Membership.Role.AUDITOR:
+        raise PermissionDenied("Only an assigned auditor may confirm report decisions.")
+    if batch.status == AuditorReportImport.Status.CONFIRMED:
+        raise ValidationError("This auditor report import is already confirmed.")
+    rows = list(batch.rows.select_related("subclause__regulation__version__source"))
+    if not rows or any(not row.subclause_id or row.validation_error for row in rows):
+        raise ValidationError("Resolve every unmatched, duplicate or invalid row before confirmation.")
+    now = timezone.now()
+    for row in rows:
+        clause = row.subclause
+        sequence = (clause.audit_assessments.aggregate(models.Max("sequence"))["sequence__max"] or 0) + 1
+        if not clause_legal_ready(clause):
+            compliance = ClauseAuditAssessment.ComplianceStatus.LEGAL_UNVERIFIED
+        elif row.reported_status == AuditorReportImportRow.ReportedStatus.COMPLIANT:
+            compliance = ClauseAuditAssessment.ComplianceStatus.READY
+        elif row.reported_status == AuditorReportImportRow.ReportedStatus.NOT_APPLICABLE:
+            compliance = ClauseAuditAssessment.ComplianceStatus.N_A
+        else:
+            compliance = ClauseAuditAssessment.ComplianceStatus.GAP
+        decision = (
+            ClauseAuditAssessment.Decision.ACCEPT
+            if row.reported_status in {AuditorReportImportRow.ReportedStatus.COMPLIANT, AuditorReportImportRow.ReportedStatus.NOT_APPLICABLE}
+            else ClauseAuditAssessment.Decision.REQUEST_UPDATE
+            if row.reported_status == AuditorReportImportRow.ReportedStatus.PARTIAL
+            else ClauseAuditAssessment.Decision.REJECT
+        )
+        active_evidence = list(ClauseEvidence.objects.filter(tenant=tenant, subclause=clause, withdrawn_at__isnull=True))
+        snapshot = [
+            {"id": str(item.id), "sha256": item.plaintext_sha256, "status": item.status, "filename": item.original_filename}
+            for item in active_evidence
+        ]
+        snapshot.append({
+            "auditor_report_id": str(batch.report_id), "sha256": batch.report.plaintext_sha256,
+            "filename": batch.report.original_filename, "reported_status": row.reported_status,
+            "import_row_id": str(row.id), "evidence_role": "ONSITE_AUDITOR_REPORT",
+        })
+        assessment = ClauseAuditAssessment.objects.create(
+            tenant=tenant, subclause=clause, preliminary_analysis=clause.ai_analyses.first(),
+            auditor_report=batch.report, reported_status=row.reported_status,
+            sequence=sequence, decision=decision, compliance_status=compliance,
+            note=row.remarks, gaps=row.remarks if decision != ClauseAuditAssessment.Decision.ACCEPT else "",
+            evidence_snapshot=snapshot, reviewer=actor,
+        )
+        AuditorReportImportRow.objects.filter(pk=row.pk).update(confirmed_assessment=assessment)
+    batch.status = AuditorReportImport.Status.CONFIRMED
+    batch.confirmed_by = actor
+    batch.confirmed_at = now
+    batch.save(update_fields=["status", "confirmed_by", "confirmed_at"])
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="auditor.report_import_confirmed",
+        object_type="AuditorReportImport", object_id=str(batch.id),
+        metadata={"report_sha256": batch.report.plaintext_sha256, "decision_count": len(rows)},
+    )
+    return batch
 
 
 def clause_legal_ready(subclause):

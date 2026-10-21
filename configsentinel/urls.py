@@ -12,6 +12,7 @@ from apps.regulatory.api import (
     TestProcedureViewSet, TrustedSigningKeyViewSet,
     ClauseAuditAssessmentViewSet, ClauseEvidenceReviewViewSet,
     AuditorAccountViewSet, AuditorReportViewSet,
+    AuditorReportImportViewSet, AuditorReportImportRowViewSet,
 )
 from apps.regulatory.views import audit_report, auditor_report_download, auditor_room, dashboard, mapping_center, regulatory_center
 from apps.evidence.api import EvidenceArtifactViewSet
@@ -33,6 +34,8 @@ router.register("clause-evidence-reviews", ClauseEvidenceReviewViewSet, basename
 router.register("clause-audit-assessments", ClauseAuditAssessmentViewSet, basename="clause-audit-assessment")
 router.register("auditor-accounts", AuditorAccountViewSet, basename="auditor-account")
 router.register("auditor-reports", AuditorReportViewSet, basename="auditor-report")
+router.register("auditor-report-imports", AuditorReportImportViewSet, basename="auditor-report-import")
+router.register("auditor-report-import-rows", AuditorReportImportRowViewSet, basename="auditor-report-import-row")
 router.register("evidence", EvidenceArtifactViewSet, basename="evidence")
 router.register("devices", DeviceViewSet, basename="device")
 router.register("credential-references", CredentialReferenceViewSet, basename="credential-reference")

@@ -6,6 +6,7 @@ from .models import (
     RegulatoryVersion, TestProcedure, TrustedSigningKey,
     ClauseAuditAssessment, ClauseEvidenceReview,
     AuditorReport,
+    AuditorReportImport, AuditorReportImportRow,
 )
 
 
@@ -172,4 +173,30 @@ class AuditorReportSerializer(serializers.ModelSerializer):
 class AuditorReportUploadSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255)
     report = serializers.FileField()
+
+
+class AuditorReportImportRowSerializer(serializers.ModelSerializer):
+    clause_path = serializers.CharField(source="subclause.clause_path", read_only=True)
+    confirmed_assessment_status = serializers.CharField(source="confirmed_assessment.compliance_status", read_only=True)
+
+    class Meta:
+        model = AuditorReportImportRow
+        fields = ["id", "batch", "row_number", "raw_clause_reference", "reported_status", "remarks", "subclause", "clause_path", "validation_error", "confirmed_assessment", "confirmed_assessment_status"]
+        read_only_fields = fields
+
+
+class AuditorReportImportRowUpdateSerializer(serializers.Serializer):
+    subclause = serializers.UUIDField()
+    reported_status = serializers.ChoiceField(choices=AuditorReportImportRow.ReportedStatus.choices)
+    remarks = serializers.CharField(allow_blank=False)
+
+
+class AuditorReportImportSerializer(serializers.ModelSerializer):
+    rows = AuditorReportImportRowSerializer(many=True, read_only=True)
+    report_title = serializers.CharField(source="report.title", read_only=True)
+
+    class Meta:
+        model = AuditorReportImport
+        fields = ["id", "report", "report_title", "status", "extraction_note", "created_by", "created_at", "confirmed_by", "confirmed_at", "rows"]
+        read_only_fields = fields
 

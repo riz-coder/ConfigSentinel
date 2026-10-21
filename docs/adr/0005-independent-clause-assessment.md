@@ -34,3 +34,6 @@ request `INSUFFICIENT_EVIDENCE`.
 - An auditor may upload an encrypted signed/on-site PDF report as an immutable
   audit artifact. The upload never bulk-sets clause outcomes; each clause
   decision remains separately attributable and source-gated.
+- Local deterministic PDF extraction may prepare clause/status/remarks drafts.
+  Drafts have no dashboard effect; only an explicit auditor confirmation creates
+  immutable assessments. Unmatched and duplicate clause references fail closed.

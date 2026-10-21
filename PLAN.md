@@ -2,6 +2,35 @@
 
 ## Current work package
 
+`WP-AUD-02` — confirmed import of clause decisions from an auditor PDF.
+
+### Current bounded change: auditor PDF decision import
+
+- Extract only explicit clause number, auditor status and remarks from a
+  text-readable uploaded PDF using local deterministic parsing.
+- Store extracted rows as drafts; unmatched, duplicate or ambiguous rows remain
+  blocked until the auditor corrects them in a preview screen.
+- Require explicit auditor confirmation before creating immutable clause
+  assessment versions and updating dashboard roll-ups.
+- Preserve the original auditor wording/status and report hash in each decision
+  snapshot. Never send the report to an external model.
+- Force `LEGAL_UNVERIFIED` while source/mapping gates are pending, even where
+  the uploaded report says compliant.
+- Acceptance: permissions, tenant isolation, parser edge cases, correction,
+  confirmation idempotency, immutable decisions, dashboard update, RLS, API,
+  UI and documentation tests pass.
+
+Implementation status: complete in the local build. Single-line and multiline
+text-readable PDF rows are parsed locally into editable drafts; unmatched and
+duplicate references block confirmation. Confirmed rows create immutable,
+report-hash-linked assessments and update the existing auditor dashboard chart.
+Targeted auditor tests passed 12/12; the full suite passed 87 tests with 5
+PostgreSQL-only tests skipped on local SQLite. Migrations, drift check, Django
+system checks and UTF-8 OpenAPI schema generation passed. Scanned/image-only
+auditor verdict PDFs remain unsupported to avoid unsafe OCR status inference.
+
+### Previous work package
+
 `WP-EVID/AUD-01` — independent clause evidence review and audit dossier.
 
 ### Current bounded change: auditor review and report preview

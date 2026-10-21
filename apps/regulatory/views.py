@@ -23,8 +23,9 @@ from .models import (
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
     ClauseAuditAssessment,
     AuditorReport,
+    AuditorReportImport, AuditorReportImportRow,
 )
-from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, coverage_report, create_auditor_account, create_mapping, create_obligation, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_mapping, review_version, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
+from .services import analyze_clause_evidence, assess_clause, clause_legal_ready, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, create_obligation, extract_auditor_report_decisions, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_mapping, review_version, update_auditor_import_row, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
 
 
@@ -325,7 +326,10 @@ def _audit_clauses(tenant):
         clause.latest_assessment = clause.audit_assessments.all()[0] if clause.audit_assessments.all() else None
         clause.legal_ready = clause_legal_ready(clause)
         current_hashes = sorted(item.plaintext_sha256 for item in clause.active_evidence)
-        recorded_hashes = sorted(item["sha256"] for item in (clause.latest_assessment.evidence_snapshot if clause.latest_assessment else []))
+        recorded_hashes = sorted(
+            item["sha256"] for item in (clause.latest_assessment.evidence_snapshot if clause.latest_assessment else [])
+            if item.get("id")
+        )
         clause.assessment_stale = bool(clause.latest_assessment and current_hashes != recorded_hashes)
     return clauses
 
@@ -352,6 +356,25 @@ def auditor_room(request):
                     filename=upload.name, content=upload.read(),
                 )
                 messages.success(request, "Encrypted auditor PDF uploaded. Clause decisions remain separately attributable.")
+            elif operation == "extract_report":
+                report = get_object_or_404(AuditorReport, pk=request.POST.get("report"), tenant=tenant)
+                batch = extract_auditor_report_decisions(report=report, actor=request.user)
+                if batch.status == AuditorReportImport.Status.ERROR:
+                    messages.warning(request, batch.extraction_note)
+                else:
+                    messages.success(request, f"{batch.rows.count()} clause decision row(s) extracted. Review every row before confirmation.")
+            elif operation == "update_import_row":
+                row = get_object_or_404(AuditorReportImportRow, pk=request.POST.get("row"), batch__report__tenant=tenant)
+                clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                update_auditor_import_row(
+                    row=row, actor=request.user, subclause=clause,
+                    reported_status=request.POST.get("reported_status", ""), remarks=request.POST.get("remarks", ""),
+                )
+                messages.success(request, "Draft auditor row updated; no dashboard decision has been created yet.")
+            elif operation == "confirm_import":
+                batch = get_object_or_404(AuditorReportImport, pk=request.POST.get("batch"), report__tenant=tenant)
+                confirmed = confirm_auditor_report_import(batch=batch, actor=request.user)
+                messages.success(request, f"{confirmed.rows.count()} immutable clause decision(s) confirmed from the auditor report.")
             elif operation == "review_file":
                 artifact = get_object_or_404(ClauseEvidence, pk=request.POST.get("evidence"), tenant=tenant)
                 review_clause_evidence(
@@ -376,7 +399,9 @@ def auditor_room(request):
         "can_review": membership.role == Membership.Role.AUDITOR,
         "can_create_auditor": membership.role == Membership.Role.OWNER,
         "auditors": Membership.objects.filter(tenant=tenant, role=Membership.Role.AUDITOR, is_active=True).select_related("user"),
-        "reports": AuditorReport.objects.filter(tenant=tenant).select_related("uploaded_by"),
+        "reports": AuditorReport.objects.filter(tenant=tenant).select_related("uploaded_by").prefetch_related("decision_import__rows__subclause__regulation"),
+        "import_clauses": SubClause.objects.filter(regulation__version__source__tenant=tenant).select_related("regulation").order_by("regulation__number", "clause_path"),
+        "reported_status_choices": AuditorReportImportRow.ReportedStatus.choices,
         "evidence_decisions": [ClauseEvidence.Status.ACCEPTED, ClauseEvidence.Status.REJECTED],
         "assessment_decisions": ClauseAuditAssessment.Decision.choices,
     })

@@ -6,6 +6,7 @@ from .models import (
     SubClause, TestProcedure, TrustedSigningKey,
     ClauseAuditAssessment, ClauseEvidenceReview,
     AuditorReport,
+    AuditorReportImport, AuditorReportImportRow,
 )
 
 
@@ -54,7 +55,7 @@ class MappingProvenanceAdmin(admin.ModelAdmin):
         return False
 
 
-@admin.register(ClauseAuditAssessment, ClauseEvidenceReview, AuditorReport)
+@admin.register(ClauseAuditAssessment, ClauseEvidenceReview, AuditorReport, AuditorReportImport, AuditorReportImportRow)
 class ClauseAuditProvenanceAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False

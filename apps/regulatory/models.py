@@ -150,6 +150,10 @@ class ClauseAuditAssessment(models.Model):
     preliminary_analysis = models.ForeignKey(
         "ClauseAIAnalysis", null=True, blank=True, on_delete=models.PROTECT, related_name="audit_assessments"
     )
+    auditor_report = models.ForeignKey(
+        "AuditorReport", null=True, blank=True, on_delete=models.PROTECT, related_name="clause_assessments"
+    )
+    reported_status = models.CharField(max_length=32, blank=True)
     sequence = models.PositiveIntegerField()
     decision = models.CharField(max_length=20, choices=Decision.choices)
     compliance_status = models.CharField(max_length=32, choices=ComplianceStatus.choices)
@@ -207,6 +211,70 @@ class AuditorReport(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Auditor reports are retained as audit records.")
+
+
+class AuditorReportImport(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft review"
+        READY = "READY", "Ready to confirm"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        ERROR = "ERROR", "Extraction error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.OneToOneField(AuditorReport, on_delete=models.PROTECT, related_name="decision_import")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    extraction_note = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_auditor_report_imports")
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="confirmed_auditor_report_imports")
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self).objects.filter(pk=self.pk).values("status").first()
+            if previous and previous["status"] == self.Status.CONFIRMED:
+                raise ValidationError("Confirmed auditor imports are immutable.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Auditor import history cannot be deleted.")
+
+
+class AuditorReportImportRow(models.Model):
+    class ReportedStatus(models.TextChoices):
+        COMPLIANT = "COMPLIANT", "Compliant"
+        PARTIAL = "PARTIAL", "Partially compliant"
+        NON_COMPLIANT = "NON_COMPLIANT", "Non-compliant"
+        NOT_APPLICABLE = "NOT_APPLICABLE", "Not applicable"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(AuditorReportImport, on_delete=models.PROTECT, related_name="rows")
+    row_number = models.PositiveIntegerField()
+    raw_clause_reference = models.CharField(max_length=120)
+    reported_status = models.CharField(max_length=32, choices=ReportedStatus.choices)
+    remarks = models.TextField()
+    subclause = models.ForeignKey("SubClause", null=True, blank=True, on_delete=models.PROTECT, related_name="auditor_import_rows")
+    validation_error = models.CharField(max_length=255, blank=True)
+    confirmed_assessment = models.OneToOneField(
+        ClauseAuditAssessment, null=True, blank=True, on_delete=models.PROTECT, related_name="import_row"
+    )
+
+    class Meta:
+        ordering = ["row_number"]
+        constraints = [models.UniqueConstraint(fields=["batch", "row_number"], name="unique_auditor_import_row")]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            existing = type(self).objects.filter(pk=self.pk).values("confirmed_assessment_id").first()
+            if existing and existing["confirmed_assessment_id"]:
+                raise ValidationError("Confirmed auditor import rows are immutable.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.confirmed_assessment_id:
+            raise ValidationError("Confirmed auditor import rows are immutable.")
+        return super().delete(*args, **kwargs)
 
 
 class ClauseAIAnalysis(models.Model):
