@@ -8,7 +8,7 @@ from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import Asset, AssetDependency, CriticalService, Site
-from .services import import_assets_csv, save_inventory_object
+from .services import import_assets_file, save_inventory_object
 
 
 @login_required
@@ -34,7 +34,8 @@ def inventory_center(request):
                 provider = Asset.objects.get(tenant=tenant, pk=request.POST["provider"])
                 save_inventory_object(obj=AssetDependency(tenant=tenant, dependent=dependent, provider=provider, kind=request.POST["kind"], notes=request.POST.get("notes", "").strip(), created_by=request.user), actor=request.user)
             elif operation == "csv":
-                count = import_assets_csv(tenant=tenant, actor=request.user, content=request.FILES["csv"].read())
+                upload = request.FILES["inventory_file"]
+                count = import_assets_file(tenant=tenant, actor=request.user, filename=upload.name, content=upload.read())
                 messages.success(request, f"Imported {count} validated assets.")
             else:
                 raise ValidationError("Unknown inventory operation.")

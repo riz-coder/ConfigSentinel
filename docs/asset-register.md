@@ -6,8 +6,9 @@ custodian, criticality, classification and lifecycle. A CII checkbox records a
 customer scope candidate only; it is not a legal CII determination.
 
 Owners and compliance leads may create records through `/inventory/` or the
-API. CSV intake is all-or-nothing and rejects unknown enum values, duplicate
-identifiers, foreign users and unresolved scope references. Viewer and auditor
+API. CSV, XLSX and XLS intake recognizes documented header aliases, maps them
+to the internal schema, and is all-or-nothing. It rejects missing required
+details, unknown enum values, duplicate identifiers, foreign users and unresolved scope references. Viewer and auditor
 roles are read-only. PostgreSQL row-level security provides a second tenant
 boundary below application filtering.
 

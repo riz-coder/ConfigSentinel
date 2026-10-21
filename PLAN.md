@@ -8,7 +8,7 @@
 
 - Establish tenant-scoped sites, critical services, assets and explicit asset
   dependencies with accountable owner/custodian and lifecycle metadata.
-- Provide guarded manual and UTF-8 CSV onboarding, duplicate rejection and
+- Provide guarded manual and CSV/XLSX/XLS onboarding, duplicate rejection and
   cross-tenant validation; incomplete scope remains visible and never passes.
 - Add role-aware UI/API, dashboard readiness indicators, append-only audit
   events, PostgreSQL RLS, migrations, docs and regression tests.
@@ -19,7 +19,10 @@ Implementation status: complete in the local build. Sites, critical services,
 assets and dependency records are tenant scoped with accountable ownership,
 criticality, classification and lifecycle. Manual and atomic CSV onboarding,
 role-aware API/UI, audit events, dashboard gaps and PostgreSQL RLS are included.
-Focused inventory tests passed 5/5; the full suite passed 97 tests with 6
+CSV, XLSX and legacy XLS files now use normalized header aliases rather than a
+fixed column order; required semantic fields, tenant people and scope references
+must still resolve unambiguously before the all-or-nothing import proceeds.
+Focused inventory tests passed 7/7; the full suite passed 99 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 

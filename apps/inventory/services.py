@@ -1,13 +1,115 @@
 import csv
 import io
+import re
+from datetime import date, datetime
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import models, transaction
 
 from apps.auditlog.models import AuditEvent
 from apps.tenancy.models import Membership
 
 from .models import Asset, CriticalService, Site
+
+
+FIELD_ALIASES = {
+    "asset_tag": {"assettag", "assetid", "assetcode", "inventoryid", "inventorycode", "tag", "deviceid"},
+    "name": {"name", "assetname", "devicename", "hostname", "systemname"},
+    "kind": {"kind", "type", "assettype", "devicetype", "category", "assetcategory"},
+    "owner_username": {"owner", "ownerusername", "assetowner", "businessowner", "responsibleperson", "responsibleowner"},
+    "custodian_username": {"custodian", "custodianusername", "assetcustodian", "technicalowner", "technicalcustodian"},
+    "criticality": {"criticality", "assetcriticality", "businesscriticality", "impact", "priority"},
+    "site_code": {"site", "sitecode", "siteid", "location", "locationcode", "pop", "office"},
+    "service_code": {"service", "servicecode", "businessservice", "criticalservice", "serviceid"},
+    "is_cii": {"iscii", "cii", "ciistatus", "criticalinfrastructure", "criticalasset"},
+    "classification": {"classification", "dataclassification", "securityclassification", "assetclassification"},
+    "lifecycle": {"lifecycle", "lifecyclestatus", "assetstatus", "status"},
+    "manufacturer": {"manufacturer", "vendor", "make", "brand"},
+    "model": {"model", "modelnumber", "productmodel"},
+    "serial_number": {"serial", "serialnumber", "serialno", "servicetag"},
+    "source_reference": {"sourcereference", "source", "inventorysource", "cmdbreference", "reference"},
+    "review_due_at": {"reviewdue", "reviewdate", "nextreview", "reviewdueat"},
+}
+REQUIRED_FIELDS = {"asset_tag", "name", "kind", "owner_username", "custodian_username", "criticality"}
+
+
+def _key(value):
+    return re.sub(r"[^a-z0-9]", "", str(value or "").strip().lower())
+
+
+def _field_map(headers):
+    mapped = {}
+    for header in headers:
+        normalized = _key(header)
+        for field, aliases in FIELD_ALIASES.items():
+            if normalized in aliases and field not in mapped:
+                mapped[field] = header
+                break
+    missing = REQUIRED_FIELDS - mapped.keys()
+    if missing:
+        raise ValidationError("Required details could not be identified: " + ", ".join(sorted(missing)) + ". Rename only these unclear columns or use a recognized heading such as Asset ID, Asset Name, Type, Owner, Custodian and Criticality.")
+    return mapped
+
+
+def _sheet_rows(*, filename, content):
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if extension == "csv":
+        text = None
+        for encoding in ("utf-8-sig", "utf-16", "cp1252"):
+            try:
+                text = content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise ValidationError("CSV encoding is unsupported; save it as UTF-8, UTF-16 or Windows CSV.")
+        reader = csv.DictReader(io.StringIO(text))
+        return reader.fieldnames or [], list(reader)
+    if extension == "xlsx":
+        from openpyxl import load_workbook
+        try:
+            sheet = load_workbook(io.BytesIO(content), read_only=True, data_only=True).active
+            values = list(sheet.iter_rows(values_only=True))
+        except Exception as exc:
+            raise ValidationError("XLSX file could not be read.") from exc
+    elif extension == "xls":
+        import xlrd
+        try:
+            sheet = xlrd.open_workbook(file_contents=content).sheet_by_index(0)
+            values = [sheet.row_values(index) for index in range(sheet.nrows)]
+        except Exception as exc:
+            raise ValidationError("XLS file could not be read.") from exc
+    else:
+        raise ValidationError("Upload a CSV, XLSX or XLS asset inventory file.")
+    if not values:
+        raise ValidationError("The spreadsheet is empty.")
+    headers = [str(value or "").strip() for value in values[0]]
+    rows = [dict(zip(headers, row)) for row in values[1:] if any(value not in (None, "") for value in row)]
+    return headers, rows
+
+
+def _enum(value, choices, aliases=None):
+    normalized = _key(value)
+    aliases = aliases or {}
+    if normalized in aliases:
+        return aliases[normalized]
+    for code, label in choices:
+        if normalized in {_key(code), _key(label)}:
+            return code
+    return str(value or "").strip().upper()
+
+
+def _member_user(*, tenant, value, label):
+    wanted = str(value or "").strip().casefold()
+    matches = []
+    for membership in tenant.memberships.filter(is_active=True).select_related("user"):
+        user = membership.user
+        candidates = {user.username.casefold(), user.email.casefold(), user.get_full_name().strip().casefold()}
+        if wanted and wanted in candidates:
+            matches.append(user)
+    if len(matches) != 1:
+        raise ValidationError(f"{label} '{value}' must match exactly one active tenant username, email or full name.")
+    return matches[0]
 
 
 def require_inventory_operator(*, tenant, actor):
@@ -25,24 +127,20 @@ def save_inventory_object(*, obj, actor):
 
 
 @transaction.atomic
-def import_assets_csv(*, tenant, actor, content):
+def import_assets_file(*, tenant, actor, filename, content):
     require_inventory_operator(tenant=tenant, actor=actor)
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise ValidationError("CSV must be UTF-8 encoded.") from exc
-    reader = csv.DictReader(io.StringIO(text))
-    required = {"asset_tag", "name", "kind", "owner_username", "custodian_username", "criticality"}
-    if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
-        raise ValidationError(f"CSV requires columns: {', '.join(sorted(required))}.")
+    headers, source_rows = _sheet_rows(filename=filename, content=content)
+    mapping = _field_map(headers)
     rows, errors, seen_tags = [], [], set()
-    for number, row in enumerate(reader, start=2):
+    for number, source_row in enumerate(source_rows, start=2):
         try:
-            owner = tenant.memberships.get(user__username=row["owner_username"].strip(), is_active=True).user
-            custodian = tenant.memberships.get(user__username=row["custodian_username"].strip(), is_active=True).user
+            row = {field: source_row.get(header, "") for field, header in mapping.items()}
+            row = {field: "" if value is None else str(value).strip() for field, value in row.items()}
+            owner = _member_user(tenant=tenant, value=row["owner_username"], label="Owner")
+            custodian = _member_user(tenant=tenant, value=row["custodian_username"], label="Custodian")
             site_code, service_code = row.get("site_code", "").strip(), row.get("service_code", "").strip()
-            site = Site.objects.filter(tenant=tenant, code=site_code).first() if site_code else None
-            service = CriticalService.objects.filter(tenant=tenant, code=service_code).first() if service_code else None
+            site = Site.objects.filter(tenant=tenant).filter(models.Q(code__iexact=site_code) | models.Q(name__iexact=site_code)).first() if site_code else None
+            service = CriticalService.objects.filter(tenant=tenant).filter(models.Q(code__iexact=service_code) | models.Q(name__iexact=service_code)).first() if service_code else None
             if site_code and not site:
                 raise ValidationError(f"Unknown site_code {site_code}.")
             if service_code and not service:
@@ -51,7 +149,13 @@ def import_assets_csv(*, tenant, actor, content):
             if tag in seen_tags:
                 raise ValidationError(f"Duplicate asset_tag {tag} in this batch.")
             seen_tags.add(tag)
-            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"].strip(), kind=row["kind"].strip(), owner=owner, custodian=custodian, criticality=row["criticality"].strip(), site=site, service=service, is_cii=row.get("is_cii", "").strip().lower() in {"1", "true", "yes"}, created_by=actor)
+            kind = _enum(row["kind"], Asset.Kind.choices, {"router": Asset.Kind.NETWORK_DEVICE, "switch": Asset.Kind.NETWORK_DEVICE, "olt": Asset.Kind.NETWORK_DEVICE, "firewall": Asset.Kind.SECURITY_DEVICE, "vm": Asset.Kind.SERVER})
+            criticality = _enum(row["criticality"], CriticalService.Criticality.choices)
+            classification = _enum(row.get("classification", "INTERNAL"), Asset.Classification.choices)
+            lifecycle = _enum(row.get("lifecycle", "ACTIVE"), Asset.Lifecycle.choices)
+            review_value = source_row.get(mapping.get("review_due_at", ""), "")
+            review_due = review_value.date() if isinstance(review_value, datetime) else review_value if isinstance(review_value, date) else (datetime.fromisoformat(str(review_value)).date() if review_value else None)
+            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], kind=kind, owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row.get("is_cii", "").lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), source_reference=row.get("source_reference", ""), review_due_at=review_due, created_by=actor)
             obj.full_clean()
             rows.append(obj)
         except Exception as exc:
@@ -61,3 +165,8 @@ def import_assets_csv(*, tenant, actor, content):
     Asset.objects.bulk_create(rows)
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="inventory.assets_imported", object_type="Asset", object_id="batch", metadata={"count": len(rows)})
     return len(rows)
+
+
+def import_assets_csv(*, tenant, actor, content):
+    """Backward-compatible wrapper for existing callers."""
+    return import_assets_file(tenant=tenant, actor=actor, filename="assets.csv", content=content)
