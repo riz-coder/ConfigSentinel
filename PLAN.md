@@ -5,7 +5,19 @@
 `WP-REG-02` — source PDF intake, reviewed clause register, clause-evidence
 workflow and operational dashboard.
 
-### Current bounded change: evidence intelligence safety gate
+### Current bounded change: WP-REG completion gate
+
+- Complete authoritative source metadata capture (authority URL, gazette/SRO
+  identifier, version and effective date).
+- Allow authorized users to register exact clause-derived obligations and
+  evidence expectations without AI invention.
+- Add visible readiness blockers and separate legal/compliance approval actions.
+- Prevent either approval while source provenance, page/text coordinates,
+  subclauses or obligation coverage are incomplete.
+- Acceptance: two distinct authorized reviewers can verify a ready pack; an
+  incomplete PDF extraction remains `SOURCE_PENDING` with actionable blockers.
+
+### Completed bounded change: evidence intelligence safety gate
 
 - Pause all Gemini/public-LLM calls behind an explicit, default-off feature flag.
 - Keep the existing local keyword checks as preliminary triage only; they must
@@ -48,6 +60,10 @@ and independent review. A `COMPLIANT` state is only possible after those gates.
 
 - Add an encrypted official-source PDF intake path, a human-reviewed clause
   register, and source/document hash provenance.
+- Capture authority URL, gazette/SRO identifier and effective date, and expose
+  fail-closed readiness blockers before dual review.
+- Register human-authored clause obligations and evidence specifications, then
+  require independent legal and compliance decisions.
 - Add simple ISP clause-evidence submission against exact reviewed clause IDs,
   independent acceptance/rejection, and honest clause readiness states.
 - Replace the normal-user manifest/signature screen with guided PDF-to-clause
@@ -57,8 +73,9 @@ and independent review. A `COMPLIANT` state is only possible after those gates.
 
 ## Explicitly out of scope
 
-- OCR/LLM-based legal extraction, automatic legal interpretation, and an
-  automatic `COMPLIANT` or legal certification outcome.
+- AI-generated legal obligations, automatic legal interpretation, and an
+  automatic legal certification outcome. Unedited PDF text extraction is only
+  a review aid and remains `SOURCE_PENDING`.
 - Device collection, parser/rule packs, automatic remediation, notices, report
   exports, production KMS/S3 credentials, or production retention defaults.
 
@@ -66,12 +83,12 @@ and independent review. A `COMPLIANT` state is only possible after those gates.
 
 1. Official source upload stores ciphertext only and records a hash, uploader,
    source metadata, and `SOURCE_PENDING` status until review.
-2. Each clause is an exact user-entered source coordinate with page and review
-   state; the app never invents or silently extracts legal text from a PDF.
+2. Each extracted clause retains its PDF page and unedited source text, remains
+   pending, and receives only human-authored obligation/evidence mappings.
 3. ISP evidence attaches to an exact clause and stays `UNDER_REVIEW` until an
    independent reviewer accepts/rejects it; foreign-tenant IDs fail closed.
-4. Dashboard displays only `READY`, `GAP`, `INSUFFICIENT_EVIDENCE`,
-   `LEGAL_UNVERIFIED`, and `N_A`; it never calls an ISP legally compliant.
+4. Dual approval fails closed until provenance, source coordinates and
+   obligation coverage are complete; reviewer identities are distinct.
 5. API/OpenAPI, UI, migration, RLS, encryption/tamper, permission and negative
    tests pass.
 

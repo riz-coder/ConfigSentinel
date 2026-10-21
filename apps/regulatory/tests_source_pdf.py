@@ -9,7 +9,7 @@ from django.test import TestCase
 from apps.tenancy.models import Membership, Tenant
 
 from .models import ClauseEvidence, LegalSourceStatus, Regulation, SourceDocument, SubClause
-from .services import analyze_clause_evidence, extract_source_regulations, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
+from .services import analyze_clause_evidence, create_obligation, extract_source_regulations, update_source_metadata, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .ai import analyze_clause, deterministic_assessment
 
@@ -56,6 +56,31 @@ class SourcePdfIntakeTests(TestCase):
         self.assertEqual(first.legal_status, LegalSourceStatus.SOURCE_PENDING)
         self.assertIn("Source requirement one", first.source_excerpt)
         self.assertFalse(first.subclauses.get().obligations.exists())
+
+    def test_pdf_version_exposes_blockers_until_metadata_and_obligation_are_complete(self):
+        source, version = upload_source_pdf(
+            tenant=self.tenant, actor=self.user, title="Official source", version_label="v1",
+            filename="official.pdf", content=b"%PDF-1.4 synthetic source",
+        )
+        regulation = Regulation.objects.create(
+            version=version, number=1, title="Test", source_page="1",
+            source_excerpt="The licensee shall maintain a documented policy.",
+        )
+        clause = SubClause.objects.create(regulation=regulation, clause_path="1", title="Test", source_page="1")
+        self.assertIn("SOURCE_AUTHORITY_URL_MISSING", version_review_blockers(version))
+        self.assertIn("OBLIGATIONS_MISSING", version_review_blockers(version))
+
+        update_source_metadata(
+            version=version, actor=self.user, authority_url="https://example.gov.pk/official.pdf",
+            gazette_identifier="TEST-SRO-1", effective_date="2026-01-01",
+        )
+        create_obligation(
+            subclause=clause, actor=self.user, obligation_key="R1-1",
+            paraphrase="Maintain the documented policy.", requirement_type="DOCUMENT",
+            evidence_specification="Approved controlled policy.",
+        )
+
+        self.assertEqual(version_review_blockers(version), [])
 
     def test_local_assessment_finds_missing_named_roles(self):
         result = deterministic_assessment(

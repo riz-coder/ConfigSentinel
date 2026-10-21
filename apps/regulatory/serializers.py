@@ -42,10 +42,15 @@ class RegulatoryVersionSerializer(serializers.ModelSerializer):
     source_title = serializers.CharField(source="source.title", read_only=True)
     legal_status = serializers.CharField(source="source.legal_status", read_only=True)
     reviews = RegulatoryReviewSerializer(many=True, read_only=True)
+    review_blockers = serializers.SerializerMethodField()
+
+    def get_review_blockers(self, obj):
+        from .services import version_review_blockers
+        return version_review_blockers(obj)
 
     class Meta:
         model = RegulatoryVersion
-        fields = ["id", "source", "source_title", "version_label", "effective_date", "approval_status", "legal_status", "reviews", "created_at"]
+        fields = ["id", "source", "source_title", "version_label", "effective_date", "approval_status", "legal_status", "review_blockers", "reviews", "created_at"]
         read_only_fields = fields
 
 

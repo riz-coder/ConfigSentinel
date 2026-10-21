@@ -457,6 +457,9 @@ def review_version(*, version, reviewer, kind, decision, note=""):
         raise ValidationError("Valid review kind and decision are required.")
     if version.approval_status != RegulatoryVersion.ApprovalStatus.UNDER_REVIEW:
         raise ValidationError("Only versions under review can receive a decision.")
+    blockers = version_review_blockers(version)
+    if decision == RegulatoryReview.Decision.APPROVED and blockers:
+        raise ValidationError("Regulatory version is not review-ready: " + ", ".join(blockers))
     membership = Membership.objects.filter(user=reviewer, tenant=version.source.tenant, is_active=True).first()
     required_role = Membership.Role.LEGAL_REVIEWER if kind == RegulatoryReview.Kind.LEGAL else Membership.Role.COMPLIANCE_LEAD
     if membership is None or membership.role != required_role:
@@ -483,6 +486,79 @@ def review_version(*, version, reviewer, kind, decision, note=""):
         Obligation.objects.filter(subclause__regulation__version=version).update(legal_status=LegalSourceStatus.VERIFIED)
     AuditEvent.objects.create(tenant=version.source.tenant, actor=reviewer, action="regulatory_version.reviewed", object_type="RegulatoryVersion", object_id=str(version.id), metadata={"kind": kind, "decision": decision})
     return review
+
+
+def version_review_blockers(version):
+    source = version.source
+    blockers = []
+    if not source.authority_url:
+        blockers.append("SOURCE_AUTHORITY_URL_MISSING")
+    if not source.gazette_identifier:
+        blockers.append("GAZETTE_IDENTIFIER_MISSING")
+    if not source.sha256:
+        blockers.append("SOURCE_HASH_MISSING")
+    try:
+        document = source.document
+    except SourceDocument.DoesNotExist:
+        document = None
+    if document and document.plaintext_sha256 != source.sha256:
+        blockers.append("SOURCE_DOCUMENT_HASH_MISMATCH")
+    regulations = version.regulations.all()
+    if not regulations.exists():
+        blockers.append("NO_REGULATIONS")
+    elif regulations.filter(source_page="").exists():
+        blockers.append("REGULATION_SOURCE_PAGE_MISSING")
+    if document and regulations.filter(source_excerpt="").exists():
+        blockers.append("REGULATION_SOURCE_TEXT_MISSING")
+    subclauses = SubClause.objects.filter(regulation__version=version)
+    if not subclauses.exists():
+        blockers.append("NO_SUBCLAUSES")
+    elif subclauses.filter(source_page="").exists():
+        blockers.append("SUBCLAUSE_SOURCE_PAGE_MISSING")
+    if subclauses.filter(obligations__isnull=True).exists():
+        blockers.append("OBLIGATIONS_MISSING")
+    return blockers
+
+
+@transaction.atomic
+def update_source_metadata(*, version, actor, authority_url, gazette_identifier, effective_date=None):
+    membership = Membership.objects.filter(user=actor, tenant=version.source.tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
+        raise PermissionDenied("Only a tenant owner or legal reviewer may update source metadata.")
+    if version.approval_status == RegulatoryVersion.ApprovalStatus.APPROVED:
+        raise ValidationError("Approved source metadata is immutable; import a new version.")
+    source = version.source
+    source.authority_url = authority_url.strip()
+    source.gazette_identifier = gazette_identifier.strip()
+    source.save(update_fields=["authority_url", "gazette_identifier"])
+    if effective_date:
+        version.effective_date = effective_date
+        version.save(update_fields=["effective_date"])
+    AuditEvent.objects.create(
+        tenant=source.tenant, actor=actor, action="regulatory_source.metadata_updated",
+        object_type="RegulatoryVersion", object_id=str(version.id),
+        metadata={"gazette_identifier": source.gazette_identifier},
+    )
+    return version
+
+
+@transaction.atomic
+def create_obligation(*, subclause, actor, obligation_key, paraphrase, requirement_type, evidence_specification=""):
+    tenant = subclause.regulation.version.source.tenant
+    membership = Membership.objects.filter(user=actor, tenant=tenant, is_active=True).first()
+    if membership is None or membership.role not in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER}:
+        raise PermissionDenied("Only a tenant owner or legal reviewer may register source obligations.")
+    if subclause.regulation.version.approval_status == RegulatoryVersion.ApprovalStatus.APPROVED:
+        raise ValidationError("Approved obligations are immutable; import a new source version.")
+    item = Obligation.objects.create(
+        subclause=subclause, obligation_key=obligation_key.strip(), paraphrase=paraphrase.strip(),
+        requirement_type=requirement_type.strip(), evidence_specification=evidence_specification.strip(),
+    )
+    AuditEvent.objects.create(
+        tenant=tenant, actor=actor, action="regulatory_obligation.registered",
+        object_type="Obligation", object_id=str(item.id), metadata={"obligation_key": item.obligation_key},
+    )
+    return item
 
 
 def coverage_report(version):

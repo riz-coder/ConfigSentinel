@@ -1,8 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <p><a href="{% url 'dashboard' %}">← Dashboard</a></p><h1>Framework source center</h1>
+<p><a href="{% url 'mapping-center' %}">Open control, test and evidence mappings →</a></p>
 {% for message in messages %}<div class="card">{{ message }}</div>{% endfor %}
-{% for version in versions %}{% for regulation in version.clause_cards %}
+{% if can_author_source %}<details class="card" style="margin:1rem 0"><summary>Add a new regulatory source PDF</summary><form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="operation" value="upload_pdf"><input name="title" placeholder="Neutral source title" required><input name="version_label" placeholder="Version label" required><input type="file" name="pdf" accept="application/pdf,.pdf" required><button>Encrypt, upload and extract pending clauses</button></form></details>{% endif %}
+{% for version in versions %}
+<section class="card" style="margin:1rem 0;border-left:4px solid {% if version.review_blockers %}#bd2430{% else %}#087a43{% endif %}">
+<h2>{{ version.source.title }} · {{ version.version_label }}</h2>
+<p>Source: {{ version.source.legal_status }} · Version: {{ version.approval_status }} · SHA-256: <code>{{ version.source.sha256 }}</code></p>
+{% if version.review_blockers %}<strong style="color:#bd2430">WP-REG blockers</strong><ul style="color:#bd2430">{% for blocker in version.review_blockers %}<li>{{ blocker }}</li>{% endfor %}</ul>{% else %}<p style="color:#087a43"><strong>Source pack is ready for independent dual review.</strong></p>{% endif %}
+{% if version.coverage.issues %}<strong style="color:#b16b00">Coverage gate issues</strong><ul style="color:#b16b00">{% for issue in version.coverage.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% else %}<p style="color:#087a43"><strong>Regulatory mapping coverage gate passed.</strong></p>{% endif %}
+{% if can_author_source and version.approval_status != 'APPROVED' %}<form method="post" class="card">{% csrf_token %}<input type="hidden" name="operation" value="source_metadata"><input type="hidden" name="version" value="{{ version.id }}"><h3>Authoritative source metadata</h3><input type="url" name="authority_url" value="{{ version.source.authority_url }}" placeholder="Official authority URL" required><input name="gazette_identifier" value="{{ version.source.gazette_identifier }}" placeholder="Gazette / SRO identifier" required><input type="date" name="effective_date" value="{{ version.effective_date|date:'Y-m-d' }}"><button>Save source metadata</button></form>{% endif %}
+<p>Reviews: {% for review in version.reviews.all %}{{ review.kind }}={{ review.decision }} by {{ review.reviewer.username }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}</p>
+{% if review_kind and version.approval_status == 'UNDER_REVIEW' %}<form method="post">{% csrf_token %}<input type="hidden" name="operation" value="review"><input type="hidden" name="version" value="{{ version.id }}"><input type="hidden" name="kind" value="{{ review_kind }}"><input name="note" placeholder="Independent review note" required><button name="decision" value="APPROVED" {% if version.review_blockers %}disabled{% endif %}>Approve {{ review_kind|lower }}</button><button name="decision" value="REJECTED">Reject</button></form>{% endif %}
+</section>
+{% for regulation in version.clause_cards %}
 <article class="card" style="margin:.8rem 0;border-left:4px solid #3157d5">
 <h3>Clause {{ regulation.number }} · {{ regulation.title }}</h3>
 <details><summary>What the source says</summary><pre style="white-space:pre-wrap;max-height:18rem;overflow:auto">{{ regulation.source_excerpt }}</pre></details>
@@ -16,6 +28,7 @@
 {% if finding.result.gaps %}<strong style="color:#bd2430">Missing / gaps</strong><ul style="color:#bd2430">{% for gap in finding.result.gaps %}<li>{{ gap }}</li>{% endfor %}</ul>{% endif %}
 {% if finding.result.next_evidence %}<strong>Evidence required next</strong><ul>{% for item in finding.result.next_evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}</div>
 {% endwith %}{% endif %}
+{% if can_author_source and version.approval_status != 'APPROVED' %}<details class="card" style="margin:.8rem 0"><summary>Register exact obligation for {{ clause.clause_path }}</summary><form method="post">{% csrf_token %}<input type="hidden" name="operation" value="obligation"><input type="hidden" name="clause" value="{{ clause.id }}"><input name="obligation_key" placeholder="Stable obligation key, e.g. R46-1-A" required><textarea name="paraphrase" placeholder="Human-reviewed obligation derived from this exact clause" required></textarea><input name="requirement_type" placeholder="Requirement type, e.g. DOCUMENT / PROCESS / TECHNICAL" required><textarea name="evidence_specification" placeholder="Exact evidence expected from the ISP" required></textarea><button>Save obligation as SOURCE_PENDING</button></form></details>{% endif %}
 {% if membership.role == 'OWNER' or membership.role == 'COMPLIANCE_LEAD' %}<form method="post" enctype="multipart/form-data">{% csrf_token %}<input type="hidden" name="operation" value="submit_evidence"><input type="hidden" name="clause" value="{{ clause.id }}"><input name="title" placeholder="Evidence title" required><input type="file" name="evidence" multiple required><button>Add file(s)</button></form><form method="post">{% csrf_token %}<input type="hidden" name="operation" value="analyze"><input type="hidden" name="clause" value="{{ clause.id }}"><button>Analyze active evidence</button></form>{% endif %}
 {% endfor %}</article>{% endfor %}{% endfor %}
 {% endblock %}

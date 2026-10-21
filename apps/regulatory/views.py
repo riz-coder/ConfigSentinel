@@ -19,7 +19,7 @@ from .models import (
     ObligationControlMapping, Regulation, RegulatoryReview, RegulatorySource, ClauseEvidence,
     RegulatoryVersion, SubClause, TestProcedure, TrustedSigningKey, ClauseAIAnalysis, ClauseAnalysisJob,
 )
-from .services import analyze_clause_evidence, coverage_report, create_mapping, extract_source_regulations, import_pack, review_mapping, review_version, upload_clause_evidence, upload_source_pdf, withdraw_clause_evidence
+from .services import analyze_clause_evidence, coverage_report, create_mapping, create_obligation, extract_source_regulations, import_pack, review_mapping, review_version, update_source_metadata, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
 
 
@@ -164,6 +164,25 @@ def regulatory_center(request):
                     decision=request.POST.get("decision"), note=request.POST.get("note", ""),
                 )
                 messages.success(request, "Review decision recorded.")
+            elif operation == "source_metadata":
+                version = get_object_or_404(RegulatoryVersion, pk=request.POST.get("version"), source__tenant=tenant)
+                update_source_metadata(
+                    version=version, actor=request.user,
+                    authority_url=request.POST.get("authority_url", ""),
+                    gazette_identifier=request.POST.get("gazette_identifier", ""),
+                    effective_date=request.POST.get("effective_date") or None,
+                )
+                messages.success(request, "Authoritative source metadata saved; review blockers were recalculated.")
+            elif operation == "obligation":
+                clause = get_object_or_404(SubClause, pk=request.POST.get("clause"), regulation__version__source__tenant=tenant)
+                create_obligation(
+                    subclause=clause, actor=request.user,
+                    obligation_key=request.POST.get("obligation_key", ""),
+                    paraphrase=request.POST.get("paraphrase", ""),
+                    requirement_type=request.POST.get("requirement_type", ""),
+                    evidence_specification=request.POST.get("evidence_specification", ""),
+                )
+                messages.success(request, "Clause obligation saved as SOURCE_PENDING for independent review.")
         except (KeyError, ValidationError, PermissionDenied) as exc:
             messages.error(request, "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc))
         return redirect("regulatory-center")
@@ -173,6 +192,7 @@ def regulatory_center(request):
     )
     for version in versions:
         version.coverage = coverage_report(version)
+        version.review_blockers = version_review_blockers(version)
         version.clause_cards = list(version.regulations.all().prefetch_related("subclauses", "subclauses__obligations", "subclauses__submitted_evidence", "subclauses__ai_analyses"))
         for regulation in version.clause_cards:
             for clause in regulation.subclauses.all():
@@ -185,6 +205,7 @@ def regulatory_center(request):
         "signing_keys": TrustedSigningKey.objects.filter(tenant=tenant, is_active=True).order_by("name"),
         "can_import": membership.role in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER},
         "can_register_clauses": membership.role in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER},
+        "can_author_source": membership.role in {Membership.Role.OWNER, Membership.Role.LEGAL_REVIEWER},
         "review_kind": RegulatoryReview.Kind.LEGAL if membership.role == Membership.Role.LEGAL_REVIEWER else RegulatoryReview.Kind.COMPLIANCE if membership.role == Membership.Role.COMPLIANCE_LEAD else "",
     })
 

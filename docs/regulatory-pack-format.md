@@ -72,3 +72,13 @@ The coverage gate separately reports missing regulation numbers, obligations,
 control mappings, test procedures, and evidence specifications. Until an
 authenticated complete Gazette is supplied and reviewed, no production legal
 coverage claim should be made.
+
+## PDF intake review gate
+
+Tenant-uploaded PDFs remain `SOURCE_PENDING`. Before independent legal and
+compliance approval, the UI requires an authority URL, gazette/SRO identifier,
+source hash, regulation/subclause page coordinates, extracted source text for
+PDF-backed versions, and at least one human-authored obligation per subclause.
+The version API exposes the same blocker codes. Source review and complete
+84-regulation mapping coverage are separate gates; passing one never implies
+the other.
