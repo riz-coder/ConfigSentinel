@@ -44,6 +44,10 @@ official source and exact mappings complete WP-REG dual review.
 
 ### Current extension: auditor onboarding, signed report and dashboard roll-up
 
+Navigation cleanup: remove the standalone Evidence Vault link from the sidebar
+because clause evidence and auditor reports are managed in their respective
+workflows. The encrypted vault backend, API and stored data remain unchanged.
+
 - Allow tenant owners to create a dedicated auditor login from the application;
   passwords are validated and never returned or written to audit metadata.
 - Allow auditors to upload an encrypted PDF containing their signed/on-site
