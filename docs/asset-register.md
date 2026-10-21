@@ -19,3 +19,11 @@ precedence over a misleading `.csv` filename.
 Missing site/service assignments and overdue reviews remain visible coverage
 gaps. This package does not poll devices, infer legal applicability or produce
 a compliance result.
+
+## Standard template
+
+The CSV/XLSX download contains three sample rows and fixed columns derived from
+the minimum Asset Register attribute categories visible in Regulation 11(3) of
+the user-supplied 2025 source copy. It is a ConfigSentinel operational
+template, not a regulator-issued form, while the source remains
+`SOURCE_PENDING`.

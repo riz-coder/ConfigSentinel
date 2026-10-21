@@ -1,15 +1,15 @@
+import csv
+import io
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import TestCase
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from rest_framework.test import APIClient
-from io import BytesIO
-from openpyxl import Workbook
 
 from apps.tenancy.models import Membership, Tenant
-
 from .models import Asset, CriticalService, Site
-from .services import import_assets_csv, import_assets_file, save_inventory_object
+from .services import TEMPLATE_COLUMNS, asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object, standard_template_rows
 
 
 class InventoryFoundationTests(TestCase):
@@ -26,6 +26,11 @@ class InventoryFoundationTests(TestCase):
         self.site = save_inventory_object(obj=Site(tenant=self.tenant, code="KHI-01", name="Karachi", kind=Site.Kind.POP, created_by=self.owner), actor=self.owner)
         self.service = save_inventory_object(obj=CriticalService(tenant=self.tenant, code="DNS", name="DNS", criticality=CriticalService.Criticality.CRITICAL, owner=self.owner, created_by=self.owner), actor=self.owner)
 
+    def _csv(self, rows, delimiter=",", encoding="utf-8-sig"):
+        stream = io.StringIO(); writer = csv.DictWriter(stream, fieldnames=TEMPLATE_COLUMNS, delimiter=delimiter, lineterminator="\n")
+        writer.writeheader(); writer.writerows(rows)
+        return stream.getvalue().encode(encoding)
+
     def test_asset_requires_same_tenant_accountability_and_scope(self):
         asset = Asset(tenant=self.tenant, asset_tag="RTR-01", name="Core router", kind=Asset.Kind.NETWORK_DEVICE, site=self.site, service=self.service, owner=self.owner, custodian=self.foreign, criticality=CriticalService.Criticality.CRITICAL, created_by=self.owner)
         with self.assertRaises(ValidationError):
@@ -36,49 +41,47 @@ class InventoryFoundationTests(TestCase):
             save_inventory_object(obj=Site(tenant=self.tenant, code="X", name="X", kind=Site.Kind.OTHER, created_by=self.viewer), actor=self.viewer)
 
     def test_csv_import_is_atomic_when_any_row_is_invalid(self):
-        payload = b"asset_tag,name,kind,owner_username,custodian_username,criticality,site_code\nRTR-01,Router,NETWORK_DEVICE,asset-owner,asset-owner,CRITICAL,KHI-01\nRTR-02,Router 2,BAD,asset-owner,asset-owner,HIGH,KHI-01\n"
+        rows = standard_template_rows(self.owner.username)[:2]; rows[1]["asset_type"] = "BAD"
         with self.assertRaises(ValidationError):
-            import_assets_csv(tenant=self.tenant, actor=self.owner, content=payload)
+            import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows))
         self.assertFalse(Asset.objects.filter(tenant=self.tenant).exists())
 
     def test_csv_rejects_unresolved_scope_reference(self):
-        payload = b"asset_tag,name,kind,owner_username,custodian_username,criticality,site_code\nRTR-01,Router,NETWORK_DEVICE,asset-owner,asset-owner,CRITICAL,UNKNOWN\n"
+        rows = standard_template_rows(self.owner.username)[:1]; rows[0]["site_code"] = "UNKNOWN"
         with self.assertRaisesMessage(ValidationError, "Unknown site_code"):
-            import_assets_csv(tenant=self.tenant, actor=self.owner, content=payload)
+            import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows))
 
-    def test_flexible_csv_headers_and_windows_encoding_are_mapped(self):
-        payload = "Inventory Code;Device Name;Category;Business Owner;Technical Custodian;Priority;Location\nRTR-01;Café Router;Router;asset-owner;asset-owner;Critical;KHI-01\n".encode("cp1252")
-        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="inventory.csv", content=payload), 1)
-        asset = Asset.objects.get(asset_tag="RTR-01")
-        self.assertEqual(asset.name, "Café Router")
-        self.assertEqual(asset.kind, Asset.Kind.NETWORK_DEVICE)
-        self.assertEqual(asset.criticality, CriticalService.Criticality.CRITICAL)
+    def test_standard_csv_supports_windows_encoding_and_semicolon_delimiter(self):
+        rows = standard_template_rows(self.owner.username)[:1]; rows[0]["asset_name"] = "Café Router"
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="inventory.csv", content=self._csv(rows, ";", "cp1252")), 1)
+        self.assertEqual(Asset.objects.get(asset_tag="NET-CORE-001").name, "Café Router")
 
-    def test_xlsx_headers_are_mapped_to_internal_fields(self):
-        workbook = Workbook(); sheet = workbook.active
-        sheet.append(["Asset ID", "Asset Name", "Asset Type", "Owner", "Custodian", "Impact", "Site Code", "CII"])
-        sheet.append(["SRV-01", "Billing VM", "VM", "asset-owner", "asset-owner", "High", "KHI-01", "Yes"])
-        stream = BytesIO(); workbook.save(stream)
-        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.xlsx", content=stream.getvalue()), 1)
-        asset = Asset.objects.get(asset_tag="SRV-01")
-        self.assertEqual(asset.kind, Asset.Kind.SERVER)
+    def test_policy_aligned_xlsx_template_imports_sample_rows(self):
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.xlsx", content=asset_template_xlsx(self.owner.username)), 3)
+        asset = Asset.objects.get(asset_tag="NET-CORE-001")
+        self.assertEqual(asset.business_function, "Internet connectivity")
         self.assertTrue(asset.is_cii)
 
     def test_excel_content_is_detected_when_file_has_csv_extension(self):
-        workbook = Workbook(); sheet = workbook.active
-        sheet.append(["Asset Code", "System Name", "Category", "Owner", "Custodian", "Priority"])
-        sheet.append(["APP-01", "Portal", "Application", "asset-owner", "asset-owner", "Medium"])
-        stream = BytesIO(); workbook.save(stream)
-        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="wrong.csv", content=stream.getvalue()), 1)
-        self.assertTrue(Asset.objects.filter(asset_tag="APP-01").exists())
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="wrong.csv", content=asset_template_xlsx(self.owner.username)), 3)
+
+    def test_template_csv_has_fixed_policy_columns_and_three_examples(self):
+        rows = list(csv.DictReader(io.StringIO(asset_template_csv(self.owner.username).decode("utf-8-sig"))))
+        self.assertEqual(list(rows[0]), TEMPLATE_COLUMNS)
+        self.assertEqual(len(rows), 3)
 
     def test_api_is_tenant_scoped(self):
         Asset.objects.create(tenant=self.tenant, asset_tag="A-1", name="Visible", kind=Asset.Kind.SERVER, owner=self.owner, custodian=self.owner, criticality=CriticalService.Criticality.HIGH, created_by=self.owner)
         Asset.objects.create(tenant=self.other, asset_tag="B-1", name="Hidden", kind=Asset.Kind.SERVER, owner=self.foreign, custodian=self.foreign, criticality=CriticalService.Criticality.HIGH, created_by=self.foreign)
-        client = APIClient()
-        client.force_login(self.owner)
+        client = APIClient(); client.force_login(self.owner)
         device = TOTPDevice.objects.create(user=self.owner, name="test", confirmed=True)
         session = client.session; session["otp_device_id"] = device.persistent_id; session.save()
         response = client.get("/api/v1/assets/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["name"] for row in response.data["results"]], ["Visible"])
+        csv_response = client.get("/inventory/template.csv")
+        xlsx_response = client.get("/inventory/template.xlsx")
+        self.assertEqual(csv_response.status_code, 200)
+        self.assertIn("asset-register-template.csv", csv_response["Content-Disposition"])
+        self.assertEqual(xlsx_response.status_code, 200)
+        self.assertTrue(xlsx_response.content.startswith(b"PK\x03\x04"))

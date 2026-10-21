@@ -78,6 +78,9 @@ the source, mapping, or legal verification state.
 The asset register provides accountable scope context for later clause,
 evidence and technical-control mappings. Marking an asset as a CII candidate
 does not verify legal applicability and does not change any clause status.
+The standard import schema covers the minimum asset-register attribute groups
+transcribed from Regulation 11(3) of the uploaded source copy, but remains an
+operational template under `SOURCE_PENDING`, not a regulator-issued form.
 
 For operational triage, less than 50% preliminary evidence coverage is shown
 as `NON_COMPLIANT` and 50–99% as `PARTIAL`. At 100%, the UI remains

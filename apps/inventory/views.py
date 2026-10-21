@@ -2,13 +2,30 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import redirect, render
+from django.http import HttpResponse
 from django.utils import timezone
 
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import Asset, AssetDependency, CriticalService, Site
-from .services import import_assets_file, save_inventory_object
+from .services import asset_template_csv, asset_template_xlsx, import_assets_file, save_inventory_object
+
+
+@login_required
+def inventory_template_csv(request):
+    tenant_for_request(request)
+    response = HttpResponse(asset_template_csv(request.user.username), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="asset-register-template.csv"'
+    return response
+
+
+@login_required
+def inventory_template_xlsx(request):
+    tenant_for_request(request)
+    response = HttpResponse(asset_template_xlsx(request.user.username), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = 'attachment; filename="asset-register-template.xlsx"'
+    return response
 
 
 @login_required

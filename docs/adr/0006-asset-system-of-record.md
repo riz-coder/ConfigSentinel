@@ -12,3 +12,8 @@ Application filtering is backed by PostgreSQL forced RLS. CSV intake validates
 the complete batch before insertion. Collector endpoints are not merged into
 the asset record in this package: a later reviewed migration will link them so
 inventory remains useful even where no technical collection is available.
+
+The schema retains the minimum attribute categories transcribed from Regulation
+11(3) of the uploaded source copy. Fixed-column CSV/XLSX templates provide
+examples and imports fail atomically when required data is absent. This does
+not mark the source or mapping `VERIFIED`.

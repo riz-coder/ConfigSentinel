@@ -29,8 +29,60 @@ FIELD_ALIASES = {
     "serial_number": {"serial", "serialnumber", "serialno", "servicetag"},
     "source_reference": {"sourcereference", "source", "inventorysource", "cmdbreference", "reference"},
     "review_due_at": {"reviewdue", "reviewdate", "nextreview", "reviewdueat"},
+    "description": {"assetdescription", "description"},
+    "business_function": {"businessfunction", "businessprocess", "function"},
+    "physical_location": {"physicallocation"},
+    "logical_network_location": {"logicalnetworklocation", "networklocation", "logicaladdress"},
+    "acquired_on": {"dateofacquisition", "acquisitiondate", "acquiredon"},
+    "end_of_support": {"endofsupport", "eos", "eosdate"},
+    "end_of_life": {"endoflife", "eol", "eoldate"},
+    "decommissioning_plan": {"decommissioningplan", "decommissionplan"},
+    "asset_value": {"assetvalue", "value"},
+    "risk_rating": {"riskrating", "risklevel"},
+    "associated_security_controls": {"associatedsecuritycontrols", "securitycontrols", "controls"},
+    "data_stored_or_processed": {"typeofdatastoredorprocessed", "datastoredorprocessed", "datatype"},
+    "backup_recovery_status": {"backupandrecoverystatus", "backuprecoverystatus", "backupstatus"},
+    "linked_systems_dependencies": {"linkedsystemsdependencies", "dependencies", "linkedsystems"},
+    "licensing_warranty_information": {"licensingorwarrantyinformation", "licensingwarranty", "warranty"},
+    "last_reviewed_on": {"lastreviewedon", "lastreviewdate"},
 }
-REQUIRED_FIELDS = {"asset_tag", "name", "kind", "owner_username", "custodian_username", "criticality"}
+TEMPLATE_COLUMNS = [
+    "asset_id", "asset_name", "asset_description", "asset_type", "classification",
+    "business_function", "asset_owner", "custodian_responsible_person",
+    "physical_location", "logical_network_location", "date_of_acquisition",
+    "end_of_support", "end_of_life", "decommissioning_plan", "current_status",
+    "asset_value", "risk_rating", "associated_security_controls",
+    "type_of_data_stored_or_processed", "backup_and_recovery_status",
+    "linked_systems_dependencies", "licensing_or_warranty_information",
+    "cii_asset", "last_reviewed_on", "next_review_due", "manufacturer", "model",
+    "serial_number", "site_code", "service_code", "source_reference",
+]
+CANONICAL_FIELDS = {
+    "asset_id": "asset_tag", "asset_name": "name", "asset_description": "description",
+    "asset_type": "kind", "classification": "criticality", "business_function": "business_function",
+    "asset_owner": "owner_username", "custodian_responsible_person": "custodian_username",
+    "physical_location": "physical_location", "logical_network_location": "logical_network_location",
+    "date_of_acquisition": "acquired_on", "end_of_support": "end_of_support",
+    "end_of_life": "end_of_life", "decommissioning_plan": "decommissioning_plan",
+    "current_status": "lifecycle", "asset_value": "asset_value", "risk_rating": "risk_rating",
+    "associated_security_controls": "associated_security_controls",
+    "type_of_data_stored_or_processed": "data_stored_or_processed",
+    "backup_and_recovery_status": "backup_recovery_status",
+    "linked_systems_dependencies": "linked_systems_dependencies",
+    "licensing_or_warranty_information": "licensing_warranty_information",
+    "cii_asset": "is_cii", "last_reviewed_on": "last_reviewed_on",
+    "next_review_due": "review_due_at", "manufacturer": "manufacturer", "model": "model",
+    "serial_number": "serial_number", "site_code": "site_code", "service_code": "service_code",
+    "source_reference": "source_reference",
+}
+REQUIRED_FIELDS = {
+    "asset_tag", "name", "description", "kind", "criticality", "business_function",
+    "owner_username", "custodian_username", "physical_location", "logical_network_location",
+    "acquired_on", "decommissioning_plan", "lifecycle", "asset_value", "risk_rating",
+    "associated_security_controls", "data_stored_or_processed", "backup_recovery_status",
+    "linked_systems_dependencies", "licensing_warranty_information", "is_cii",
+    "last_reviewed_on", "review_due_at",
+}
 
 
 def _key(value):
@@ -41,13 +93,17 @@ def _field_map(headers):
     mapped = {}
     for header in headers:
         normalized = _key(header)
+        canonical = CANONICAL_FIELDS.get(str(header or "").strip().lower())
+        if canonical and canonical not in mapped:
+            mapped[canonical] = header
+            continue
         for field, aliases in FIELD_ALIASES.items():
             if normalized in aliases and field not in mapped:
                 mapped[field] = header
                 break
     missing = REQUIRED_FIELDS - mapped.keys()
     if missing:
-        raise ValidationError("Required details could not be identified: " + ", ".join(sorted(missing)) + ". Rename only these unclear columns or use a recognized heading such as Asset ID, Asset Name, Type, Owner, Custodian and Criticality.")
+        raise ValidationError("Required template columns are missing or renamed: " + ", ".join(sorted(missing)) + ". Download and use the standard Asset Register template.")
     return mapped
 
 
@@ -63,7 +119,15 @@ def _sheet_rows(*, filename, content):
         extension = "xls"
     if extension == "csv":
         text = None
-        for encoding in ("utf-8-sig", "utf-32", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin-1"):
+        if content.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+            encodings = ["utf-32"]
+        elif content.startswith((b"\xff\xfe", b"\xfe\xff")):
+            encodings = ["utf-16"]
+        elif b"\x00" in content[:512]:
+            encodings = ["utf-16-le", "utf-16-be"]
+        else:
+            encodings = ["utf-8-sig", "cp1252", "latin-1"]
+        for encoding in encodings:
             try:
                 text = content.decode(encoding)
                 if "\x00" in text:
@@ -127,6 +191,58 @@ def _member_user(*, tenant, value, label):
     return matches[0]
 
 
+def _date_value(value, *, required=False):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    if not raw and not required:
+        return None
+    try:
+        return datetime.fromisoformat(raw).date()
+    except ValueError as exc:
+        raise ValidationError(f"Date '{raw}' must use YYYY-MM-DD format.") from exc
+
+
+def standard_template_rows(username):
+    shared = {
+        "asset_owner": username, "custodian_responsible_person": username,
+        "last_reviewed_on": "2026-01-15", "next_review_due": "2027-01-15",
+        "source_reference": "CMDB-2026", "site_code": "", "service_code": "",
+    }
+    return [
+        {**shared, "asset_id": "NET-CORE-001", "asset_name": "Core Edge Router", "asset_description": "Primary internet edge routing platform", "asset_type": "NETWORK_DEVICE", "classification": "CRITICAL", "business_function": "Internet connectivity", "physical_location": "Karachi DC - Rack A01", "logical_network_location": "Core VRF / management DNS name", "date_of_acquisition": "2024-01-15", "end_of_support": "2028-12-31", "end_of_life": "2029-12-31", "decommissioning_plan": "Replace during approved network refresh and securely erase configuration", "current_status": "ACTIVE", "asset_value": "Tier 1 / finance reference FIN-001", "risk_rating": "CRITICAL", "associated_security_controls": "MFA; AAA; configuration backup; logging; access review", "type_of_data_stored_or_processed": "Network configuration and traffic metadata", "backup_and_recovery_status": "Nightly configuration backup; restore test passed", "linked_systems_dependencies": "Upstream transit; core firewall; AAA; NMS", "licensing_or_warranty_information": "Support contract SUP-001 valid to 2028-12-31", "cii_asset": "YES", "manufacturer": "Example Vendor", "model": "Example Router 9000", "serial_number": "EXAMPLE-NET-001"},
+        {**shared, "asset_id": "APP-BILLING-001", "asset_name": "Billing Platform", "asset_description": "Customer billing application", "asset_type": "APPLICATION", "classification": "CRITICAL", "business_function": "Billing and revenue assurance", "physical_location": "Primary data center", "logical_network_location": "Production application segment", "date_of_acquisition": "2025-03-01", "end_of_support": "2029-03-01", "end_of_life": "2030-03-01", "decommissioning_plan": "Archive required records, revoke access and retire through CAB", "current_status": "ACTIVE", "asset_value": "Tier 1", "risk_rating": "HIGH", "associated_security_controls": "RBAC; encryption; audit logs; vulnerability management", "type_of_data_stored_or_processed": "Billing and customer account data", "backup_and_recovery_status": "Daily backup; quarterly recovery test", "linked_systems_dependencies": "Database cluster; identity provider; payment gateway", "licensing_or_warranty_information": "Enterprise license LIC-APP-001", "cii_asset": "YES", "manufacturer": "Internal / Supplier", "model": "Release 5", "serial_number": ""},
+        {**shared, "asset_id": "SRV-MON-001", "asset_name": "Monitoring Server", "asset_description": "Infrastructure monitoring and alerting server", "asset_type": "SERVER", "classification": "HIGH", "business_function": "Network operations monitoring", "physical_location": "Islamabad DC - Rack B04", "logical_network_location": "Management segment", "date_of_acquisition": "2023-06-10", "end_of_support": "2027-06-10", "end_of_life": "2028-06-10", "decommissioning_plan": "Migrate monitoring, sanitize disks and record disposal", "current_status": "ACTIVE", "asset_value": "Tier 2", "risk_rating": "HIGH", "associated_security_controls": "EDR; hardening; patching; restricted administration", "type_of_data_stored_or_processed": "Availability metrics and infrastructure alerts", "backup_and_recovery_status": "Weekly full backup; recovery procedure documented", "linked_systems_dependencies": "Network devices; notification gateway; directory service", "licensing_or_warranty_information": "Warranty WAR-001", "cii_asset": "NO", "manufacturer": "Example Vendor", "model": "Example Server R1", "serial_number": "EXAMPLE-SRV-001"},
+    ]
+
+
+def asset_template_csv(username):
+    stream = io.StringIO()
+    writer = csv.DictWriter(stream, fieldnames=TEMPLATE_COLUMNS, lineterminator="\n")
+    writer.writeheader(); writer.writerows(standard_template_rows(username))
+    return stream.getvalue().encode("utf-8-sig")
+
+
+def asset_template_xlsx(username):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    workbook = Workbook(); sheet = workbook.active; sheet.title = "Asset Register"
+    sheet.append(TEMPLATE_COLUMNS)
+    for row in standard_template_rows(username):
+        sheet.append([row.get(column, "") for column in TEMPLATE_COLUMNS])
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="3157D5")
+    sheet.freeze_panes = "A2"; sheet.auto_filter.ref = sheet.dimensions
+    instructions = workbook.create_sheet("Instructions")
+    instructions.append(["ConfigSentinel Asset Register Template"])
+    instructions.append(["Do not rename or remove columns. Replace the three EXAMPLE rows with actual tenant assets."])
+    instructions.append(["Dates use YYYY-MM-DD. Classification: CRITICAL/HIGH/MEDIUM/LOW. Current status: PLANNED/ACTIVE/MAINTENANCE/RETIRED. CII asset: YES/NO."])
+    instructions.append(["Owner and custodian must match an active workspace username, email or full name. site_code/service_code may remain blank until those records exist."])
+    output = io.BytesIO(); workbook.save(output); return output.getvalue()
+
+
 def require_inventory_operator(*, tenant, actor):
     membership = Membership.objects.filter(tenant=tenant, user=actor, is_active=True).first()
     if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.COMPLIANCE_LEAD}:
@@ -151,6 +267,9 @@ def import_assets_file(*, tenant, actor, filename, content):
         try:
             row = {field: source_row.get(header, "") for field, header in mapping.items()}
             row = {field: "" if value is None else str(value).strip() for field, value in row.items()}
+            blank_required = sorted(field for field in REQUIRED_FIELDS if not row.get(field, "").strip())
+            if blank_required:
+                raise ValidationError("Required values are blank: " + ", ".join(blank_required))
             owner = _member_user(tenant=tenant, value=row["owner_username"], label="Owner")
             custodian = _member_user(tenant=tenant, value=row["custodian_username"], label="Custodian")
             site_code, service_code = row.get("site_code", "").strip(), row.get("service_code", "").strip()
@@ -168,9 +287,7 @@ def import_assets_file(*, tenant, actor, filename, content):
             criticality = _enum(row["criticality"], CriticalService.Criticality.choices)
             classification = _enum(row.get("classification", "INTERNAL"), Asset.Classification.choices)
             lifecycle = _enum(row.get("lifecycle", "ACTIVE"), Asset.Lifecycle.choices)
-            review_value = source_row.get(mapping.get("review_due_at", ""), "")
-            review_due = review_value.date() if isinstance(review_value, datetime) else review_value if isinstance(review_value, date) else (datetime.fromisoformat(str(review_value)).date() if review_value else None)
-            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], kind=kind, owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row.get("is_cii", "").lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), source_reference=row.get("source_reference", ""), review_due_at=review_due, created_by=actor)
+            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], description=row["description"], kind=kind, business_function=row["business_function"], owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row["is_cii"].lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), physical_location=row["physical_location"], logical_network_location=row["logical_network_location"], acquired_on=_date_value(row["acquired_on"], required=True), end_of_support=_date_value(row.get("end_of_support")), end_of_life=_date_value(row.get("end_of_life")), decommissioning_plan=row["decommissioning_plan"], asset_value=row["asset_value"], risk_rating=row["risk_rating"], associated_security_controls=row["associated_security_controls"], data_stored_or_processed=row["data_stored_or_processed"], backup_recovery_status=row["backup_recovery_status"], linked_systems_dependencies=row["linked_systems_dependencies"], licensing_warranty_information=row["licensing_warranty_information"], source_reference=row.get("source_reference", ""), last_reviewed_on=_date_value(row["last_reviewed_on"], required=True), review_due_at=_date_value(row["review_due_at"], required=True), created_by=actor)
             obj.full_clean()
             rows.append(obj)
         except Exception as exc:

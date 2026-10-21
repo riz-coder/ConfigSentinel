@@ -22,7 +22,7 @@ from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, Comm
 from apps.collector.views import collector_center
 from apps.security.views import MFASetupView, MFAVerifyView
 from apps.inventory.api import AssetDependencyViewSet, AssetViewSet, CriticalServiceViewSet, SiteViewSet
-from apps.inventory.views import inventory_center
+from apps.inventory.views import inventory_center, inventory_template_csv, inventory_template_xlsx
 
 router = DefaultRouter()
 router.register("regulatory-sources", RegulatorySourceViewSet, basename="regulatory-source")
@@ -68,6 +68,8 @@ urlpatterns = [
     path("auditor/reports/<uuid:report_id>/download/", auditor_report_download, name="auditor-report-download"),
     path("actions/", corrective_action_center, name="corrective-action-center"),
     path("inventory/", inventory_center, name="inventory-center"),
+    path("inventory/template.csv", inventory_template_csv, name="inventory-template-csv"),
+    path("inventory/template.xlsx", inventory_template_xlsx, name="inventory-template-xlsx"),
     path("evidence/", evidence_center, name="evidence-center"),
     path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
     path("collector/", collector_center, name="collector-center"),

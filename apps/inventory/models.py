@@ -96,7 +96,9 @@ class Asset(models.Model):
     tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="assets")
     asset_tag = models.CharField(max_length=80)
     name = models.CharField(max_length=160)
+    description = models.TextField(default="")
     kind = models.CharField(max_length=24, choices=Kind.choices)
+    business_function = models.CharField(max_length=200, default="")
     site = models.ForeignKey(Site, null=True, blank=True, on_delete=models.PROTECT, related_name="assets")
     service = models.ForeignKey(CriticalService, null=True, blank=True, on_delete=models.PROTECT, related_name="assets")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_assets")
@@ -108,7 +110,21 @@ class Asset(models.Model):
     manufacturer = models.CharField(max_length=80, blank=True)
     model = models.CharField(max_length=100, blank=True)
     serial_number = models.CharField(max_length=120, blank=True)
+    physical_location = models.CharField(max_length=240, default="")
+    logical_network_location = models.CharField(max_length=240, default="")
+    acquired_on = models.DateField(null=True)
+    end_of_support = models.DateField(null=True, blank=True)
+    end_of_life = models.DateField(null=True, blank=True)
+    decommissioning_plan = models.TextField(default="")
+    asset_value = models.CharField(max_length=120, default="")
+    risk_rating = models.CharField(max_length=40, default="")
+    associated_security_controls = models.TextField(default="")
+    data_stored_or_processed = models.TextField(default="")
+    backup_recovery_status = models.CharField(max_length=200, default="")
+    linked_systems_dependencies = models.TextField(default="")
+    licensing_warranty_information = models.TextField(default="")
     source_reference = models.CharField(max_length=160, blank=True)
+    last_reviewed_on = models.DateField(null=True)
     review_due_at = models.DateField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_assets")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -130,6 +146,10 @@ class Asset(models.Model):
             user = getattr(self, field, None)
             if user and not user.tenant_memberships.filter(tenant=self.tenant, is_active=True).exists():
                 raise ValidationError({field: f"{field.title()} must be an active member of this tenant."})
+        if self.end_of_support and self.end_of_life and self.end_of_support > self.end_of_life:
+            raise ValidationError({"end_of_life": "End-of-life cannot be before end-of-support."})
+        if self.review_due_at and self.last_reviewed_on and self.review_due_at <= self.last_reviewed_on:
+            raise ValidationError({"review_due_at": "Next review must be after the last review date."})
 
     def __str__(self):
         return f"{self.asset_tag} - {self.name}"

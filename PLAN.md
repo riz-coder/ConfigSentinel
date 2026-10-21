@@ -19,10 +19,13 @@ Implementation status: complete in the local build. Sites, critical services,
 assets and dependency records are tenant scoped with accountable ownership,
 criticality, classification and lifecycle. Manual and atomic CSV onboarding,
 role-aware API/UI, audit events, dashboard gaps and PostgreSQL RLS are included.
-CSV, XLSX and legacy XLS files now use normalized header aliases rather than a
-fixed column order; required semantic fields, tenant people and scope references
-must still resolve unambiguously before the all-or-nothing import proceeds.
-Focused inventory tests passed 8/8; the full suite passed 99 tests with 6
+CSV, XLSX and legacy XLS files accept common encodings and delimiters, while
+the standard template fixes the required column contract; tenant people and
+scope references must resolve unambiguously before atomic import proceeds.
+The UI now provides fixed-column CSV/XLSX templates with three example rows;
+the columns cover every minimum attribute category transcribed from Regulation
+11(3) of the uploaded source copy while retaining `SOURCE_PENDING` status.
+Focused inventory tests passed 9/9; the full suite passed 101 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 
