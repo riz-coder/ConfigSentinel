@@ -25,7 +25,9 @@ scope references must resolve unambiguously before atomic import proceeds.
 The UI now provides fixed-column CSV/XLSX templates with three example rows;
 the columns cover every minimum attribute category transcribed from Regulation
 11(3) of the uploaded source copy while retaining `SOURCE_PENDING` status.
-Focused inventory tests passed 9/9; the full suite passed 101 tests with 6
+Unknown acquisition/review dates no longer block a batch import, and repeated
+row failures are compacted into readable row ranges. Focused inventory tests
+passed 11/11; the earlier full suite passed 101 tests with 6
 PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
 candidate and never changes legal or compliance state.
 

@@ -65,6 +65,24 @@ class InventoryFoundationTests(TestCase):
     def test_excel_content_is_detected_when_file_has_csv_extension(self):
         self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="wrong.csv", content=asset_template_xlsx(self.owner.username)), 3)
 
+    def test_unknown_acquisition_and_review_dates_do_not_block_import(self):
+        rows = standard_template_rows(self.owner.username)[:1]
+        rows[0]["date_of_acquisition"] = ""
+        rows[0]["last_reviewed_on"] = ""
+        rows[0]["next_review_due"] = ""
+        self.assertEqual(import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows)), 1)
+        asset = Asset.objects.get(asset_tag="NET-CORE-001")
+        self.assertIsNone(asset.acquired_on)
+        self.assertIsNone(asset.last_reviewed_on)
+        self.assertIsNone(asset.review_due_at)
+
+    def test_repeated_row_errors_are_compacted(self):
+        rows = standard_template_rows(self.owner.username)[:2]
+        for row in rows:
+            row["asset_name"] = ""
+        with self.assertRaisesMessage(ValidationError, "Rows 2-3: Required values are blank: name"):
+            import_assets_file(tenant=self.tenant, actor=self.owner, filename="assets.csv", content=self._csv(rows))
+
     def test_template_csv_has_fixed_policy_columns_and_three_examples(self):
         rows = list(csv.DictReader(io.StringIO(asset_template_csv(self.owner.username).decode("utf-8-sig"))))
         self.assertEqual(list(rows[0]), TEMPLATE_COLUMNS)

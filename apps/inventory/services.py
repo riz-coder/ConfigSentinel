@@ -83,6 +83,7 @@ REQUIRED_FIELDS = {
     "linked_systems_dependencies", "licensing_warranty_information", "is_cii",
     "last_reviewed_on", "review_due_at",
 }
+REQUIRED_VALUE_FIELDS = REQUIRED_FIELDS - {"acquired_on", "last_reviewed_on", "review_due_at"}
 
 
 def _key(value):
@@ -205,6 +206,26 @@ def _date_value(value, *, required=False):
         raise ValidationError(f"Date '{raw}' must use YYYY-MM-DD format.") from exc
 
 
+def _compact_row_errors(errors):
+    grouped = {}
+    for row_number, message in errors:
+        grouped.setdefault(message, []).append(row_number)
+    summaries = []
+    for message, row_numbers in grouped.items():
+        if len(row_numbers) == 1:
+            location = f"Row {row_numbers[0]}"
+        elif row_numbers == list(range(row_numbers[0], row_numbers[-1] + 1)):
+            location = f"Rows {row_numbers[0]}-{row_numbers[-1]}"
+        else:
+            shown = ", ".join(map(str, row_numbers[:8]))
+            suffix = f" and {len(row_numbers) - 8} more" if len(row_numbers) > 8 else ""
+            location = f"Rows {shown}{suffix}"
+        summaries.append(f"{location}: {message}")
+    if len(summaries) > 10:
+        return summaries[:10] + [f"{len(summaries) - 10} more error groups were omitted."]
+    return summaries
+
+
 def standard_template_rows(username):
     shared = {
         "asset_owner": username, "custodian_responsible_person": username,
@@ -238,7 +259,7 @@ def asset_template_xlsx(username):
     instructions = workbook.create_sheet("Instructions")
     instructions.append(["ConfigSentinel Asset Register Template"])
     instructions.append(["Do not rename or remove columns. Replace the three EXAMPLE rows with actual tenant assets."])
-    instructions.append(["Dates use YYYY-MM-DD. Classification: CRITICAL/HIGH/MEDIUM/LOW. Current status: PLANNED/ACTIVE/MAINTENANCE/RETIRED. CII asset: YES/NO."])
+    instructions.append(["Dates use YYYY-MM-DD and may be blank when genuinely unknown. Classification: CRITICAL/HIGH/MEDIUM/LOW. Current status: PLANNED/ACTIVE/MAINTENANCE/RETIRED. CII asset: YES/NO."])
     instructions.append(["Owner and custodian must match an active workspace username, email or full name. site_code/service_code may remain blank until those records exist."])
     output = io.BytesIO(); workbook.save(output); return output.getvalue()
 
@@ -267,7 +288,7 @@ def import_assets_file(*, tenant, actor, filename, content):
         try:
             row = {field: source_row.get(header, "") for field, header in mapping.items()}
             row = {field: "" if value is None else str(value).strip() for field, value in row.items()}
-            blank_required = sorted(field for field in REQUIRED_FIELDS if not row.get(field, "").strip())
+            blank_required = sorted(field for field in REQUIRED_VALUE_FIELDS if not row.get(field, "").strip())
             if blank_required:
                 raise ValidationError("Required values are blank: " + ", ".join(blank_required))
             owner = _member_user(tenant=tenant, value=row["owner_username"], label="Owner")
@@ -287,13 +308,14 @@ def import_assets_file(*, tenant, actor, filename, content):
             criticality = _enum(row["criticality"], CriticalService.Criticality.choices)
             classification = _enum(row.get("classification", "INTERNAL"), Asset.Classification.choices)
             lifecycle = _enum(row.get("lifecycle", "ACTIVE"), Asset.Lifecycle.choices)
-            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], description=row["description"], kind=kind, business_function=row["business_function"], owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row["is_cii"].lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), physical_location=row["physical_location"], logical_network_location=row["logical_network_location"], acquired_on=_date_value(row["acquired_on"], required=True), end_of_support=_date_value(row.get("end_of_support")), end_of_life=_date_value(row.get("end_of_life")), decommissioning_plan=row["decommissioning_plan"], asset_value=row["asset_value"], risk_rating=row["risk_rating"], associated_security_controls=row["associated_security_controls"], data_stored_or_processed=row["data_stored_or_processed"], backup_recovery_status=row["backup_recovery_status"], linked_systems_dependencies=row["linked_systems_dependencies"], licensing_warranty_information=row["licensing_warranty_information"], source_reference=row.get("source_reference", ""), last_reviewed_on=_date_value(row["last_reviewed_on"], required=True), review_due_at=_date_value(row["review_due_at"], required=True), created_by=actor)
+            obj = Asset(tenant=tenant, asset_tag=tag, name=row["name"], description=row["description"], kind=kind, business_function=row["business_function"], owner=owner, custodian=custodian, criticality=criticality, site=site, service=service, is_cii=row["is_cii"].lower() in {"1", "true", "yes", "y", "cii"}, classification=classification, lifecycle=lifecycle, manufacturer=row.get("manufacturer", ""), model=row.get("model", ""), serial_number=row.get("serial_number", ""), physical_location=row["physical_location"], logical_network_location=row["logical_network_location"], acquired_on=_date_value(row["acquired_on"]), end_of_support=_date_value(row.get("end_of_support")), end_of_life=_date_value(row.get("end_of_life")), decommissioning_plan=row["decommissioning_plan"], asset_value=row["asset_value"], risk_rating=row["risk_rating"], associated_security_controls=row["associated_security_controls"], data_stored_or_processed=row["data_stored_or_processed"], backup_recovery_status=row["backup_recovery_status"], linked_systems_dependencies=row["linked_systems_dependencies"], licensing_warranty_information=row["licensing_warranty_information"], source_reference=row.get("source_reference", ""), last_reviewed_on=_date_value(row["last_reviewed_on"]), review_due_at=_date_value(row["review_due_at"]), created_by=actor)
             obj.full_clean()
             rows.append(obj)
         except Exception as exc:
-            errors.append(f"Row {number}: {exc}")
+            message = "; ".join(getattr(exc, "messages", [str(exc)]))
+            errors.append((number, message))
     if errors:
-        raise ValidationError(errors)
+        raise ValidationError(_compact_row_errors(errors))
     Asset.objects.bulk_create(rows)
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="inventory.assets_imported", object_type="Asset", object_id="batch", metadata={"count": len(rows)})
     return len(rows)

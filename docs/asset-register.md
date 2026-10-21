@@ -27,3 +27,8 @@ the minimum Asset Register attribute categories visible in Regulation 11(3) of
 the user-supplied 2025 source copy. It is a ConfigSentinel operational
 template, not a regulator-issued form, while the source remains
 `SOURCE_PENDING`.
+
+The acquisition, last-review and next-review dates accept blank values when
+they are genuinely unknown. They remain inventory data-quality gaps instead
+of blocking every row. Repeated validation failures are grouped into compact
+row ranges rather than rendering one duplicate message per row.
