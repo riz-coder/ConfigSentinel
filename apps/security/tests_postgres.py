@@ -6,6 +6,7 @@ from django.utils import timezone
 from apps.auditlog.models import AuditEvent
 from apps.evidence.models import CustodyEvent, EvidenceArtifact
 from apps.collector.models import Device
+from apps.inventory.models import Site
 import base64
 
 from apps.regulatory.models import (
@@ -135,3 +136,18 @@ class PostgreSQLBoundaryTests(TransactionTestCase):
                     platform="NX-OS", management_address="192.0.2.45",
                     pinned_host_key_sha256="SHA256:blocked-db-fingerprint", created_by=user,
                 )
+
+    @skipUnlessDBFeature("supports_transactions")
+    def test_inventory_site_rls_boundary(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL-specific inventory RLS test")
+        user = get_user_model().objects.create_user(username="inventory-db-guard")
+        alpha = Tenant.objects.create(name="Inventory DB Alpha", slug="inventory-db-alpha")
+        beta = Tenant.objects.create(name="Inventory DB Beta", slug="inventory-db-beta")
+        with transaction.atomic():
+            set_rls_context(user_id=user.pk, tenant_id=alpha.pk)
+            site = Site.objects.create(tenant=alpha, code="A", name="Alpha site", kind=Site.Kind.POP, created_by=user)
+            set_rls_context(user_id=user.pk, tenant_id=beta.pk)
+            self.assertFalse(Site.objects.filter(pk=site.pk).exists())
+            with self.assertRaises(DatabaseError), transaction.atomic():
+                Site.objects.create(tenant=alpha, code="B", name="Blocked", kind=Site.Kind.OTHER, created_by=user)

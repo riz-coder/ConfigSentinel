@@ -2,6 +2,29 @@
 
 ## Current work package
 
+`WP-ASSET-01` — tenant asset, site and critical-service foundation.
+
+### Current bounded change: asset/CII system of record
+
+- Establish tenant-scoped sites, critical services, assets and explicit asset
+  dependencies with accountable owner/custodian and lifecycle metadata.
+- Provide guarded manual and UTF-8 CSV onboarding, duplicate rejection and
+  cross-tenant validation; incomplete scope remains visible and never passes.
+- Add role-aware UI/API, dashboard readiness indicators, append-only audit
+  events, PostgreSQL RLS, migrations, docs and regression tests.
+- Explicitly exclude device polling, legal CII determination and automatic
+  compliance conclusions from this package.
+
+Implementation status: complete in the local build. Sites, critical services,
+assets and dependency records are tenant scoped with accountable ownership,
+criticality, classification and lifecycle. Manual and atomic CSV onboarding,
+role-aware API/UI, audit events, dashboard gaps and PostgreSQL RLS are included.
+Focused inventory tests passed 5/5; the full suite passed 97 tests with 6
+PostgreSQL-only tests skipped on local SQLite. CII remains a customer scope
+candidate and never changes legal or compliance state.
+
+### Previous work package
+
 `WP-CAPA-01` — controlled corrective-action and retest workflow.
 
 ### Current bounded change: corrective action lifecycle

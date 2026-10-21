@@ -68,3 +68,10 @@ and collector links; administrator access; tenant-to-tenant boundary.
 - No transport or command execution exists in this package, eliminating network
   side effects while signed agents and reviewed command packs are unfinished.
 
+# WP-ASSET tenant inventory boundary
+
+Asset identifiers, ownership and dependency data are tenant-filtered in the UI
+and API and protected by PostgreSQL RLS. Foreign-tenant owners, sites, services
+and dependency endpoints fail validation. CSV batches validate fully before
+insertion so a malformed row cannot leave a partially trusted inventory.
+

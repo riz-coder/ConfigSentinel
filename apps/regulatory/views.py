@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import close_old_connections
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Q, Subquery
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import FileResponse, HttpResponse
@@ -28,6 +28,7 @@ from .models import (
 )
 from .services import add_corrective_action_progress, analyze_clause_evidence, assess_clause, attach_corrective_action_evidence, clause_legal_ready, configure_corrective_action, confirm_auditor_report_import, coverage_report, create_auditor_account, create_mapping, create_missing_corrective_action_drafts, create_obligation, extract_auditor_report_decisions, extract_source_regulations, import_pack, retrieve_auditor_report, review_clause_evidence, review_corrective_action_retest, review_mapping, review_version, submit_for_retest, update_auditor_import_row, update_source_metadata, upload_auditor_report, upload_clause_evidence, upload_source_pdf, version_review_blockers, withdraw_clause_evidence
 from .ai import preliminary_evidence_coverage
+from apps.inventory.models import Asset
 
 
 @login_required
@@ -82,6 +83,7 @@ def dashboard(request):
         start, auditor_cumulative = auditor_cumulative, auditor_cumulative + (value * 100 / auditor_total)
         auditor_stops.append(f"{color} {start:.2f}% {auditor_cumulative:.2f}%")
     actions = CorrectiveAction.objects.filter(tenant=tenant)
+    inventory_assets = Asset.objects.filter(tenant=tenant)
     action_open = actions.exclude(status=CorrectiveAction.Status.CLOSED).count()
     action_overdue = actions.exclude(status=CorrectiveAction.Status.CLOSED).filter(due_date__lt=timezone.localdate()).count()
     return render(
@@ -112,6 +114,9 @@ def dashboard(request):
             "action_overdue_count": action_overdue,
             "action_retest_count": actions.filter(status=CorrectiveAction.Status.READY_FOR_RETEST).count(),
             "action_closed_count": actions.filter(status=CorrectiveAction.Status.CLOSED).count(),
+            "asset_count": inventory_assets.count(),
+            "cii_asset_count": inventory_assets.filter(is_cii=True).count(),
+            "unscoped_asset_count": inventory_assets.filter(Q(site__isnull=True) | Q(service__isnull=True)).count(),
             "running_jobs": jobs.filter(status__in=[ClauseAnalysisJob.Status.QUEUED, ClauseAnalysisJob.Status.RUNNING]).select_related("subclause__regulation")[:10],
             "completed_jobs": jobs.filter(status=ClauseAnalysisJob.Status.COMPLETED).select_related("subclause__regulation")[:10],
             "sources": sources[:10],

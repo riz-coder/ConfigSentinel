@@ -73,6 +73,12 @@ updated evidence, not to an inferred legal mapping or preliminary AI result.
 Closing an action records workflow closure after retest; it does not change
 the source, mapping, or legal verification state.
 
+## Asset scope
+
+The asset register provides accountable scope context for later clause,
+evidence and technical-control mappings. Marking an asset as a CII candidate
+does not verify legal applicability and does not change any clause status.
+
 For operational triage, less than 50% preliminary evidence coverage is shown
 as `NON_COMPLIANT` and 50–99% as `PARTIAL`. At 100%, the UI remains
 `PARTIAL` with `EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING` unless the source,

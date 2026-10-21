@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.auditlog",
     "apps.regulatory",
     "apps.evidence",
+    "apps.inventory",
     "apps.collector",
 ]
 
