@@ -221,7 +221,7 @@ class CollectionJob(models.Model):
     agent = models.ForeignKey(CollectorAgent, on_delete=models.PROTECT, related_name="collection_jobs")
     scope_grant = models.ForeignKey(ScopeGrant, on_delete=models.PROTECT, related_name="collection_jobs")
     command_profile = models.ForeignKey(CommandProfile, on_delete=models.PROTECT, related_name="collection_jobs")
-    observed_host_key_sha256 = models.CharField(max_length=95)
+    observed_host_key_sha256 = models.CharField(max_length=95, blank=True)
     max_commands = models.PositiveSmallIntegerField()
     max_runtime_seconds = models.PositiveIntegerField()
     max_output_bytes = models.PositiveIntegerField()

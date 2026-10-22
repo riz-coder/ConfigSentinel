@@ -67,6 +67,17 @@ class CollectorBoundaryTests(TestCase):
             self.request_job(observed_host_key_sha256="SHA256:wrong")
         self.assertFalse(CollectionJob.objects.exists())
 
+    def test_approved_telnet_job_does_not_require_ssh_host_key(self):
+        device = register_device(tenant=self.tenant, actor=self.owner, asset=self.asset, name="Legacy Nexus", vendor=Device.Vendor.CISCO, platform="NXOS", management_address="192.0.2.11", transport=Device.Transport.TELNET, port=23, telnet_exception_reference="TELNET-TEST-1", telnet_risk_acknowledgement="Synthetic isolated clear-text transport risk acknowledgement for testing.")
+        approve_telnet_device(device=device, actor=self.reviewer)
+        device.refresh_from_db()
+        now = timezone.now()
+        grant = create_scope_grant(tenant=self.tenant, actor=self.owner, device=device, agent=self.agent, credential=self.credential, authorization_reference="AUTH-TELNET-001", purpose="Synthetic approved Telnet test", valid_from=now - timedelta(minutes=1), valid_until=now + timedelta(hours=1), max_commands=5, max_runtime_seconds=60, max_output_bytes=4096)
+        approve_scope(grant=grant, actor=self.reviewer); grant.refresh_from_db()
+        job = request_collection(tenant=self.tenant, actor=self.owner, device=device, agent=self.agent, scope_grant=grant, command_profile=self.profile, observed_host_key_sha256="")
+        self.assertEqual(job.observed_host_key_sha256, "")
+        self.assertEqual(job.state, CollectionJob.State.QUEUED)
+
     def test_expired_scope_fails_closed(self):
         now = timezone.now()
         expired = ScopeGrant.objects.create(
