@@ -40,6 +40,11 @@ suite passed 111 tests with 6 PostgreSQL-only tests skipped on local SQLite. No 
 network connection, parser result, rule verdict or legal clause claim is
 implemented in this package.
 
+The customer UI does not expose manual vendor-profile installation. The next
+agent package must discover actual vendor/model/OS/release/capabilities first,
+then derive the reviewed least-command collection plan for configuration,
+security, operations, topology and approved control needs.
+
 ### Previous work package
 
 `WP-ASSET-01` — tenant asset, site and critical-service foundation.

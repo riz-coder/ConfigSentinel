@@ -8,7 +8,7 @@ from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
-from .services import approve_command_profile, approve_telnet_device, install_cisco_ios_xe_profile, register_credential_reference, register_device
+from .services import approve_command_profile, approve_telnet_device, register_credential_reference, register_device
 
 
 @login_required
@@ -33,9 +33,6 @@ def collector_center(request):
             elif operation == "credential":
                 register_credential_reference(tenant=tenant, actor=request.user, name=request.POST["name"].strip(), provider=request.POST["provider"].strip(), secret_reference=request.POST["secret_reference"].strip())
                 messages.success(request, "Opaque credential reference saved; no raw credential was stored.")
-            elif operation == "install_cisco_profile":
-                _, created = install_cisco_ios_xe_profile(tenant=tenant, actor=request.user)
-                messages.success(request, "Cisco IOS/IOS-XE draft profile installed." if created else "Cisco IOS/IOS-XE profile already exists.")
             elif operation == "approve_profile":
                 profile = CommandProfile.objects.get(tenant=tenant, pk=request.POST["profile_id"])
                 approve_command_profile(profile=profile, actor=request.user, approval_reference=request.POST.get("approval_reference"))

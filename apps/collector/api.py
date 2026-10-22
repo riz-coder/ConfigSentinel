@@ -9,7 +9,7 @@ from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
 from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceSerializer, ScopeGrantSerializer
-from .services import approve_command_profile, approve_scope, approve_telnet_device, install_cisco_ios_xe_profile, request_collection
+from .services import approve_command_profile, approve_scope, approve_telnet_device, request_collection
 
 
 class TenantCollectorViewSet:
@@ -90,14 +90,6 @@ class CommandProfileViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixin
 
     def perform_create(self, serializer):
         self.save_new(serializer, "created_by")
-
-    @action(detail=False, methods=["post"])
-    def install_cisco_ios_xe(self, request):
-        try:
-            profile, created = install_cisco_ios_xe_profile(tenant=self.tenant(), actor=request.user)
-        except DjangoPermissionDenied as exc:
-            self.permission_denied(request, message=str(exc))
-        return Response(self.get_serializer(profile).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):

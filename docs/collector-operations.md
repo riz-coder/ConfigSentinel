@@ -6,7 +6,9 @@ The control plane can now bind a device to an active tenant asset, record SSH
 or an independently approved legacy Telnet exception, save an opaque
 ISP-controlled vault reference and install a versioned Cisco IOS/IOS-XE
 collection manifest. The manifest exposes every exact command, purpose,
-sensitive-output flag, count and SHA-256 digest before approval.
+sensitive-output flag, count and SHA-256 digest before approval. Manual profile
+installation is not exposed to customers; the outbound agent package will
+select a reviewed profile only after platform/capability discovery.
 
 Telnet devices are created blocked. A different owner/compliance lead must
 approve the recorded exception and clear-text transport-risk acknowledgement.

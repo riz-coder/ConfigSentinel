@@ -107,6 +107,8 @@ class CollectorBoundaryTests(TestCase):
         response = self.api_client(self.owner).get("/collector/", HTTP_X_TENANT_ID=str(self.tenant.id))
         self.assertContains(response, "Network assurance collector")
         self.assertContains(response, "Live device execution remains blocked")
+        self.assertContains(response, "Automatic device-aware assessment flow")
+        self.assertNotContains(response, "Install Cisco IOS/IOS-XE draft profile")
         self.assertNotContains(response, self.credential.secret_reference)
 
     def test_cisco_profile_requires_exact_manifest_and_independent_approval(self):
