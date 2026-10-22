@@ -26,6 +26,15 @@ COLLECTOR_VERSION = "0.1.0"
 UNSUPPORTED_MARKERS = ("% invalid input", "% incomplete command", "% ambiguous command", "invalid input detected")
 DENIED_MARKERS = ("authorization failed", "not authorized", "permission denied", "command authorization failed")
 
+CAPABILITY_RULES = {
+    "lldp_topology": (r"(?:^|\n)(?:feature\s+lldp|lldp\s+run)\b", "LLDP_NOT_CONFIGURED"),
+    "ospf_neighbors": (r"(?:^|\n)(?:feature\s+ospf|router\s+ospf)\b", "OSPF_NOT_CONFIGURED"),
+    "bgp_summary": (r"(?:^|\n)(?:feature\s+bgp|router\s+bgp)\b", "BGP_NOT_CONFIGURED"),
+    "aaa_servers": (r"(?:^|\n)(?:aaa\s+new-model|feature\s+tacacs\+|tacacs-server|radius-server)\b", "EXTERNAL_AAA_NOT_CONFIGURED"),
+    "time_sync": (r"(?:^|\n)ntp\s+(?:server|peer)\b", "NTP_NOT_CONFIGURED"),
+    "snmp_posture": (r"(?:^|\n)snmp-server\b", "SNMP_NOT_CONFIGURED"),
+}
+
 
 class CollectorExecutionError(Exception):
     def __init__(self, code):
@@ -188,6 +197,19 @@ def _execute_command(*, job, command, session, deadline, remaining_bytes, eviden
         execution.save(update_fields=["state", "reason", "output_size_bytes", "output_sha256", "finished_at"])
 
 
+def _record_not_applicable(*, job, command, reason):
+    now = timezone.now()
+    return CommandExecution.objects.create(tenant=job.tenant, job=job, command=command, state=CommandExecution.State.NOT_APPLICABLE, reason=reason, started_at=now, finished_at=now)
+
+
+def _capability_decision(command, running_config):
+    rule = CAPABILITY_RULES.get(command.key)
+    if rule is None or running_config is None:
+        return True, ""
+    pattern, reason = rule
+    return (True, "") if re.search(pattern, running_config, re.I) else (False, reason)
+
+
 @transaction.atomic
 def _claim_job(job_id):
     job = CollectionJob.objects.select_for_update().select_related("device", "agent", "scope_grant__credential", "command_profile", "tenant").get(pk=job_id)
@@ -242,11 +264,24 @@ def run_collection_job(job_id, *, secret_store=None, evidence_store=None, connec
         _transition(job, CollectionJob.State.COLLECTING)
         remaining = job.max_output_bytes - used
         non_success = False
+        running_config = None
+        config_command = next((item for item in commands if item.key == "running_config"), None)
+        if config_command is not None:
+            config_result, config_used, config_output = _execute_command(job=job, command=config_command, session=session, deadline=deadline, remaining_bytes=max(0, remaining), evidence_store=evidence_store)
+            remaining -= config_used
+            if config_result.state == CommandExecution.State.SUCCEEDED:
+                running_config = config_output
+            else:
+                non_success = True
         for command in commands:
-            if command.pk == discovery.pk:
+            if command.pk == discovery.pk or (config_command and command.pk == config_command.pk):
                 continue
             if time.monotonic() >= deadline:
                 raise CollectorExecutionError("JOB_RUNTIME_BUDGET_EXHAUSTED")
+            should_run, skip_reason = _capability_decision(command, running_config)
+            if not should_run:
+                _record_not_applicable(job=job, command=command, reason=skip_reason)
+                continue
             result, used, _ = _execute_command(job=job, command=command, session=session, deadline=deadline, remaining_bytes=max(0, remaining), evidence_store=evidence_store)
             remaining -= used
             non_success = non_success or result.state != CommandExecution.State.SUCCEEDED

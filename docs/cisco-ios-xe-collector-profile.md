@@ -65,3 +65,13 @@ workflow may add an exact read-only command to a new draft profile version only
 after safety validation and independent network-engineering approval. This
 prevents a local operator from turning the collector into a configuration or
 arbitrary-command channel.
+
+## Capability-driven execution
+
+The agent first captures and authenticates platform/version and running
+configuration. It then uses deterministic feature signatures to decide whether
+approved LLDP, OSPF, BGP, external AAA, NTP and SNMP commands are relevant. A
+missing feature records the command as `NOT_APPLICABLE` with a reason; an
+unreadable running configuration causes the agent to run the approved checks
+rather than assume absence. This planner chooses only from the independently
+approved manifest and cannot synthesize or execute free-form CLI.

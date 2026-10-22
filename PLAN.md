@@ -2,6 +2,22 @@
 
 ## Current work package
 
+`WP-NET-06` — capability-driven Cisco command planning baseline.
+
+- Use authenticated `show version` and running-configuration evidence to detect
+  enabled Cisco features before executing feature-specific approved commands.
+- Run only commands already present in the independently approved IOS/IOS-XE or
+  NX-OS manifest; never let detected text become a command.
+- Record skipped irrelevant checks as `NOT_APPLICABLE` with a deterministic
+  reason, while missing/unreadable discovery remains UNKNOWN rather than N/A.
+
+Implementation status: baseline complete. The collector always captures version
+and running configuration first, then deterministically selects approved LLDP,
+OSPF, BGP, external AAA, NTP and SNMP checks from evidence. Non-selected commands
+remain recorded as NOT_APPLICABLE; no discovered text can create a command.
+
+### Previous work package
+
 `WP-NET-05` — application-dispatched local collector jobs.
 
 - Let an authorized operator dispatch a queued job from the UI without exposing

@@ -253,6 +253,7 @@ class CommandExecution(models.Model):
         DENIED = "DENIED", "Denied"
         TIMEOUT = "TIMEOUT", "Timeout"
         TRUNCATED = "TRUNCATED", "Truncated"
+        NOT_APPLICABLE = "NOT_APPLICABLE", "Not applicable"
         ERROR = "ERROR", "Error"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

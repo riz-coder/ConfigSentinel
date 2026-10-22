@@ -275,8 +275,9 @@ class CollectorAgentExecutionTests(TestCase):
             result = run_collection_job(job.id, secret_store=SecretStore(), evidence_store=LocalEncryptedObjectStore(directory), connector_factory=Session, host_key_probe=lambda host, port: (self.device.pinned_host_key_sha256, object()))
             self.assertEqual(result.state, CollectionJob.State.COMPLETE)
             self.assertEqual(result.discovered_model, "C9300-24T")
-            self.assertEqual(CommandExecution.objects.filter(job=job, state=CommandExecution.State.SUCCEEDED).count(), 22)
-            self.assertEqual(RawSnapshot.objects.filter(execution__job=job).count(), 22)
+            self.assertEqual(CommandExecution.objects.filter(job=job).count(), 22)
+            self.assertEqual(CommandExecution.objects.filter(job=job, state=CommandExecution.State.NOT_APPLICABLE).count(), 6)
+            self.assertEqual(RawSnapshot.objects.filter(execution__job=job).count(), 16)
             assessment = DeviceAssessment.objects.get(job=job)
             self.assertEqual(assessment.result, "FAIL")
             self.assertTrue(TechnicalFinding.objects.filter(assessment=assessment, rule_id="CISCO.PSIRT.CORRELATION", result=TechnicalFinding.Result.UNKNOWN).exists())
@@ -300,7 +301,10 @@ class CollectorAgentExecutionTests(TestCase):
             def retrieve(self, reference): return {"username": "readonly", "password": "not-logged"}
         class Session:
             def __init__(self, **kwargs): pass
-            def send(self, command, timeout): return version_output if command == "show version" else ("% Invalid input detected" if command == "show ip bgp summary" else "Synthetic output")
+            def send(self, command, timeout):
+                if command == "show version": return version_output
+                if command == "show running-config": return "router bgp 65000\n"
+                return "% Invalid input detected" if command == "show ip bgp summary" else "Synthetic output"
             def close(self): pass
         with tempfile.TemporaryDirectory() as directory, override_settings(EVIDENCE_MASTER_KEY=self.secret_key, EVIDENCE_STORAGE_ROOT=directory):
             result = run_collection_job(job.id, secret_store=SecretStore(), evidence_store=LocalEncryptedObjectStore(directory), connector_factory=Session, host_key_probe=lambda host, port: (self.device.pinned_host_key_sha256, object()))

@@ -49,9 +49,12 @@ def _config_rules(config, execution):
     return rules
 
 
-def _output_rule(outputs, key, rule_id, category, severity, title, good_pattern, pass_detail, fail_detail, remediation):
+def _output_rule(outputs, executions, key, rule_id, category, severity, title, good_pattern, pass_detail, fail_detail, remediation):
     item = outputs.get(key)
     if item is None:
+        execution = executions.get(key)
+        if execution and execution.state == CommandExecution.State.NOT_APPLICABLE:
+            return _finding(rule_id, category, severity, "NOT_APPLICABLE", title, f"Capability planner skipped this command: {execution.reason}.", "", execution)
         return _finding(rule_id, category, severity, "UNKNOWN", title, "Required command evidence was unavailable or unreadable.", "Restore command access and collect again.")
     execution, text = item
     passed = _has_line(text, good_pattern)
@@ -69,8 +72,12 @@ def assess_cisco_job(job_id, *, evidence_store=None):
         return existing
     assessment = DeviceAssessment.objects.create(job=job, tenant=job.tenant, rule_pack=RULE_PACK, rule_pack_version=RULE_PACK_VERSION, result="UNKNOWN", facts={})
     outputs = {}
+    executions = {}
     integrity_errors = 0
-    for execution in job.command_executions.select_related("command", "snapshot").filter(state=CommandExecution.State.SUCCEEDED):
+    for execution in job.command_executions.select_related("command", "snapshot"):
+        executions[execution.command.key] = execution
+        if execution.state != CommandExecution.State.SUCCEEDED:
+            continue
         try:
             text = evidence_store.retrieve_and_verify(execution.snapshot).decode("utf-8", errors="replace")
             outputs[execution.command.key] = (execution, text)
@@ -79,8 +86,8 @@ def assess_cisco_job(job_id, *, evidence_store=None):
     config_item = outputs.get("running_config")
     findings = _config_rules(config_item[1] if config_item else None, config_item[0] if config_item else None)
     findings.append(_finding("CISCO.TRANSPORT.TELNET", "MANAGEMENT", "HIGH", "FAIL" if job.device.transport == "TELNET" else "PASS", "Collector management transport", "Collector access uses clear-text Telnet under an approved exception." if job.device.transport == "TELNET" else "Collector access uses SSH with a pinned host key.", "Migrate the management plane to SSH and revoke the Telnet exception." if job.device.transport == "TELNET" else ""))
-    findings.append(_output_rule(outputs, "time_sync", "CISCO.TIME.NTP_STATE", "TIME", "MEDIUM", "NTP synchronization evidence", r"^[*+#o]", "At least one selected/valid NTP association was observed.", "No selected NTP association was identified in command output.", "Verify reachability, synchronization and approved NTP sources."))
-    findings.append(_output_rule(outputs, "logging_posture", "CISCO.LOGGING.ACTIVE", "LOGGING", "MEDIUM", "Logging operational state", r"logging to|trap logging|syslog logging", "Operational logging output was observed.", "Operational output did not demonstrate active remote logging.", "Verify the remote collector path and receipt on the logging platform."))
+    findings.append(_output_rule(outputs, executions, "time_sync", "CISCO.TIME.NTP_STATE", "TIME", "MEDIUM", "NTP synchronization evidence", r"^[*+#o]", "At least one selected/valid NTP association was observed.", "No selected NTP association was identified in command output.", "Verify reachability, synchronization and approved NTP sources."))
+    findings.append(_output_rule(outputs, executions, "logging_posture", "CISCO.LOGGING.ACTIVE", "LOGGING", "MEDIUM", "Logging operational state", r"logging to|trap logging|syslog logging", "Operational logging output was observed.", "Operational output did not demonstrate active remote logging.", "Verify the remote collector path and receipt on the logging platform."))
     findings.append(_finding("CISCO.PSIRT.CORRELATION", "VULNERABILITY", "HIGH", "UNKNOWN", "Cisco security advisory correlation", f"Device release {job.discovered_release or 'UNKNOWN'} was identified, but no reviewed Cisco advisory feed is installed.", "Integrate and review the official Cisco advisory feed before asserting affected/not-affected status.", outputs.get("platform_version", (None,))[0]))
     if integrity_errors:
         findings.append(_finding("CISCO.EVIDENCE.INTEGRITY", "EVIDENCE", "CRITICAL", "ERROR", "Snapshot integrity/read failure", f"{integrity_errors} successful command snapshot(s) could not be authenticated and read.", "Investigate encrypted evidence storage and recollect."))
