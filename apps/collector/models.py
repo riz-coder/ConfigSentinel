@@ -292,3 +292,50 @@ class RawSnapshot(models.Model):
         if self.execution_id and self.execution.tenant_id != self.tenant_id:
             raise ValidationError("Snapshot and command execution must belong to the same tenant.")
 
+
+class DeviceAssessment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="device_assessments")
+    job = models.OneToOneField(CollectionJob, on_delete=models.PROTECT, related_name="assessment")
+    rule_pack = models.CharField(max_length=80, default="cisco-ios-xe-baseline")
+    rule_pack_version = models.PositiveIntegerField(default=1)
+    result = models.CharField(max_length=20, choices=[("PASS", "Pass"), ("FAIL", "Fail"), ("WARNING", "Warning"), ("UNKNOWN", "Unknown"), ("ERROR", "Error")], default="UNKNOWN")
+    facts = models.JSONField(default=dict)
+    assessed_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.job_id and self.job.tenant_id != self.tenant_id:
+            raise ValidationError("Assessment and job must belong to the same tenant.")
+
+
+class TechnicalFinding(models.Model):
+    class Result(models.TextChoices):
+        PASS = "PASS", "Pass"
+        FAIL = "FAIL", "Fail"
+        WARNING = "WARNING", "Warning"
+        UNKNOWN = "UNKNOWN", "Unknown"
+        NOT_APPLICABLE = "NOT_APPLICABLE", "Not applicable"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="technical_findings")
+    assessment = models.ForeignKey(DeviceAssessment, on_delete=models.PROTECT, related_name="findings")
+    evidence_execution = models.ForeignKey(CommandExecution, null=True, blank=True, on_delete=models.PROTECT, related_name="technical_findings")
+    rule_id = models.CharField(max_length=100)
+    category = models.CharField(max_length=40)
+    severity = models.CharField(max_length=16, choices=[("INFO", "Info"), ("LOW", "Low"), ("MEDIUM", "Medium"), ("HIGH", "High"), ("CRITICAL", "Critical")])
+    result = models.CharField(max_length=20, choices=Result.choices)
+    title = models.CharField(max_length=200)
+    detail = models.TextField()
+    remediation = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["assessment", "rule_id"], name="unique_assessment_technical_rule")]
+
+    def clean(self):
+        if self.assessment_id and self.assessment.tenant_id != self.tenant_id:
+            raise ValidationError("Finding and assessment must belong to the same tenant.")
+        if self.evidence_execution_id and self.evidence_execution.tenant_id != self.tenant_id:
+            raise ValidationError("Finding evidence must belong to the same tenant.")
+

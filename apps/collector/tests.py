@@ -19,7 +19,7 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
-from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
 from .services import CISCO_IOS_XE_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_profile, register_agent, register_device, request_collection
 
@@ -219,6 +219,10 @@ class CollectorAgentExecutionTests(TestCase):
             self.assertEqual(result.discovered_model, "C9300-24T")
             self.assertEqual(CommandExecution.objects.filter(job=job, state=CommandExecution.State.SUCCEEDED).count(), 22)
             self.assertEqual(RawSnapshot.objects.filter(execution__job=job).count(), 22)
+            assessment = DeviceAssessment.objects.get(job=job)
+            self.assertEqual(assessment.result, "FAIL")
+            self.assertTrue(TechnicalFinding.objects.filter(assessment=assessment, rule_id="CISCO.PSIRT.CORRELATION", result=TechnicalFinding.Result.UNKNOWN).exists())
+            self.assertTrue(TechnicalFinding.objects.filter(assessment=assessment, evidence_execution__isnull=False).exists())
             snapshot = RawSnapshot.objects.filter(execution__job=job).first()
             self.assertTrue(LocalEncryptedObjectStore(directory).retrieve_and_verify(snapshot))
 

@@ -36,3 +36,17 @@ periodic testing (63), KPIs/dashboard (69, 75), and emerging technology (84).
 This is a planning index, not a legal crosswalk. Router configuration alone
 cannot prove policy approval, operating effectiveness, SIEM receipt, restore
 success, physical protection, business continuity or legal compliance.
+
+## WP-NET-03 deterministic assessment baseline
+
+After collection, the local agent authenticates and decrypts each successful
+snapshot and runs version 1 of the Cisco IOS/IOS-XE baseline. Current checks
+cover running-configuration readability, AAA new-model, privileged-secret
+handling, explicit SSHv2, VTY Telnet exposure, plain HTTP management, remote
+logging configuration/state, NTP configuration/state, SNMP community versus
+SNMPv3 configuration, collection transport and snapshot integrity.
+
+Every finding links to the exact command execution and output hash. Missing,
+unsupported or unreadable commands return UNKNOWN/ERROR rather than PASS. Cisco
+PSIRT/advisory correlation remains UNKNOWN until an official reviewed feed,
+exact platform/release matching and update governance are implemented.

@@ -7,8 +7,8 @@ from apps.auditlog.models import AuditEvent
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
-from .models import CollectionJob, CollectorAgent, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
-from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandExecutionSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceSerializer, RawSnapshotSerializer, ScopeGrantSerializer
+from .models import CollectionJob, CollectorAgent, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
+from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandExecutionSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceAssessmentSerializer, DeviceSerializer, RawSnapshotSerializer, ScopeGrantSerializer, TechnicalFindingSerializer
 from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, request_collection
 
 
@@ -174,3 +174,17 @@ class RawSnapshotViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.R
 
     def get_queryset(self):
         return RawSnapshot.objects.filter(tenant=self.tenant()).select_related("execution")
+
+
+class DeviceAssessmentViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = DeviceAssessmentSerializer
+
+    def get_queryset(self):
+        return DeviceAssessment.objects.filter(tenant=self.tenant()).select_related("job", "job__device").prefetch_related("findings__evidence_execution__command")
+
+
+class TechnicalFindingViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = TechnicalFindingSerializer
+
+    def get_queryset(self):
+        return TechnicalFinding.objects.filter(tenant=self.tenant()).select_related("assessment", "evidence_execution__command")

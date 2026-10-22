@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 
 
 class DeviceSerializer(serializers.ModelSerializer):
@@ -79,3 +79,21 @@ class RawSnapshotSerializer(serializers.ModelSerializer):
         model = RawSnapshot
         fields = ["id", "execution", "plaintext_sha256", "ciphertext_sha256", "size_bytes", "collected_at"]
         read_only_fields = fields
+
+
+class TechnicalFindingSerializer(serializers.ModelSerializer):
+    evidence_command = serializers.CharField(source="evidence_execution.command.key", read_only=True)
+
+    class Meta:
+        model = TechnicalFinding
+        exclude = ["tenant"]
+        read_only_fields = [field.name for field in TechnicalFinding._meta.fields if field.name != "tenant"] + ["evidence_command"]
+
+
+class DeviceAssessmentSerializer(serializers.ModelSerializer):
+    findings = TechnicalFindingSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DeviceAssessment
+        exclude = ["tenant"]
+        read_only_fields = [field.name for field in DeviceAssessment._meta.fields if field.name != "tenant"] + ["findings"]

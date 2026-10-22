@@ -1,0 +1,94 @@
+import re
+
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
+
+from apps.auditlog.models import AuditEvent
+from apps.evidence.vault import EvidenceIntegrityError, LocalEncryptedObjectStore
+
+from .models import CollectionJob, CommandExecution, DeviceAssessment, TechnicalFinding
+
+
+RULE_PACK = "cisco-ios-xe-baseline"
+RULE_PACK_VERSION = 1
+
+
+def _has_line(text, pattern):
+    return re.search(pattern, text, re.I | re.M) is not None
+
+
+def _finding(rule_id, category, severity, result, title, detail, remediation="", evidence=None):
+    return {"rule_id": rule_id, "category": category, "severity": severity, "result": result, "title": title, "detail": detail, "remediation": remediation, "evidence_execution": evidence}
+
+
+def _config_rules(config, execution):
+    if config is None:
+        return [_finding("CISCO.CONFIG.READABLE", "CONFIGURATION", "HIGH", "UNKNOWN", "Running configuration unavailable", "The approved running-configuration command did not produce readable evidence.", "Restore read-only privilege and collect again.")]
+    rules = [_finding("CISCO.CONFIG.READABLE", "CONFIGURATION", "INFO", "PASS", "Running configuration captured", "The encrypted running-configuration snapshot passed integrity verification.", evidence=execution)]
+    aaa = _has_line(config, r"^aaa new-model\s*$")
+    rules.append(_finding("CISCO.AAA.NEW_MODEL", "ACCESS_CONTROL", "HIGH", "PASS" if aaa else "FAIL", "Central AAA framework", "AAA new-model is configured." if aaa else "AAA new-model was not found in the running configuration.", "Configure reviewed AAA with tested fallback access.", execution))
+    enable_password = _has_line(config, r"^enable password\b")
+    enable_secret = _has_line(config, r"^enable secret\b")
+    result = "FAIL" if enable_password else ("PASS" if enable_secret else "UNKNOWN")
+    rules.append(_finding("CISCO.AUTH.ENABLE_SECRET", "ACCESS_CONTROL", "HIGH", result, "Privileged access secret", "Legacy enable password is configured." if enable_password else ("Enable secret is configured." if enable_secret else "No enable secret/password line was observed; external AAA or omitted privileges may apply."), "Remove legacy enable password and use an approved strong secret/AAA design.", execution))
+    ssh_v2 = _has_line(config, r"^ip ssh version 2\s*$")
+    rules.append(_finding("CISCO.MGMT.SSH_V2", "MANAGEMENT", "HIGH", "PASS" if ssh_v2 else "FAIL", "SSH protocol version", "SSH version 2 is explicitly configured." if ssh_v2 else "Explicit SSH version 2 configuration was not found.", "Enable SSH version 2 after validating management compatibility.", execution))
+    telnet_lines = re.findall(r"^\s*transport input\s+(.+)$", config, re.I | re.M)
+    telnet_allowed = any("telnet" in line.lower().split() or "all" in line.lower().split() for line in telnet_lines)
+    rules.append(_finding("CISCO.MGMT.VTY_TELNET", "MANAGEMENT", "HIGH", "FAIL" if telnet_allowed else ("PASS" if telnet_lines else "UNKNOWN"), "VTY management transport", "Telnet is allowed on at least one VTY transport line." if telnet_allowed else ("Observed VTY transport lines do not allow Telnet." if telnet_lines else "No VTY transport input line was observed."), "Restrict VTY access to SSH after an approved migration.", execution))
+    http_enabled = _has_line(config, r"^ip http server\s*$")
+    rules.append(_finding("CISCO.MGMT.HTTP_SERVER", "MANAGEMENT", "MEDIUM", "FAIL" if http_enabled else "PASS", "Plain HTTP management service", "Plain HTTP server is enabled." if http_enabled else "Plain HTTP server enablement was not found.", "Disable plain HTTP; use reviewed HTTPS or remove the service.", execution))
+    logging_host = _has_line(config, r"^(?:logging host|logging)\s+(?:host\s+)?(?:\d{1,3}\.){3}\d{1,3}\b")
+    rules.append(_finding("CISCO.LOGGING.REMOTE", "LOGGING", "MEDIUM", "PASS" if logging_host else "FAIL", "Remote logging destination", "A remote logging destination is configured." if logging_host else "No remote logging destination was identified.", "Configure approved, monitored remote logging with protected transport where supported.", execution))
+    ntp_configured = _has_line(config, r"^ntp (?:server|peer)\b")
+    rules.append(_finding("CISCO.TIME.NTP_CONFIG", "TIME", "MEDIUM", "PASS" if ntp_configured else "FAIL", "NTP configuration", "An NTP server or peer is configured." if ntp_configured else "No NTP server or peer was found.", "Configure approved redundant time sources and authentication where supported.", execution))
+    snmp_community = _has_line(config, r"^snmp-server community\b")
+    snmp_v3 = _has_line(config, r"^snmp-server user\b.*\bv3\b")
+    snmp_result = "FAIL" if snmp_community else ("PASS" if snmp_v3 else "NOT_APPLICABLE")
+    rules.append(_finding("CISCO.SNMP.VERSION", "MONITORING", "HIGH", snmp_result, "SNMP credential model", "SNMP community-string configuration was found." if snmp_community else ("SNMPv3 user configuration was found." if snmp_v3 else "No SNMP configuration was identified."), "Replace community-based SNMP with reviewed SNMPv3 authentication and privacy.", execution))
+    return rules
+
+
+def _output_rule(outputs, key, rule_id, category, severity, title, good_pattern, pass_detail, fail_detail, remediation):
+    item = outputs.get(key)
+    if item is None:
+        return _finding(rule_id, category, severity, "UNKNOWN", title, "Required command evidence was unavailable or unreadable.", "Restore command access and collect again.")
+    execution, text = item
+    passed = _has_line(text, good_pattern)
+    return _finding(rule_id, category, severity, "PASS" if passed else "WARNING", title, pass_detail if passed else fail_detail, remediation, execution)
+
+
+@transaction.atomic
+def assess_cisco_job(job_id, *, evidence_store=None):
+    evidence_store = evidence_store or LocalEncryptedObjectStore()
+    job = CollectionJob.objects.select_for_update().select_related("tenant", "device").get(pk=job_id)
+    if job.discovered_vendor != "CISCO" or job.discovered_platform not in {"IOS", "IOS-XE"}:
+        raise ValueError("Only discovered Cisco IOS/IOS-XE jobs are supported by this rule pack.")
+    existing = DeviceAssessment.objects.filter(job=job).first()
+    if existing is not None:
+        return existing
+    assessment = DeviceAssessment.objects.create(job=job, tenant=job.tenant, rule_pack=RULE_PACK, rule_pack_version=RULE_PACK_VERSION, result="UNKNOWN", facts={})
+    outputs = {}
+    integrity_errors = 0
+    for execution in job.command_executions.select_related("command", "snapshot").filter(state=CommandExecution.State.SUCCEEDED):
+        try:
+            text = evidence_store.retrieve_and_verify(execution.snapshot).decode("utf-8", errors="replace")
+            outputs[execution.command.key] = (execution, text)
+        except (ObjectDoesNotExist, EvidenceIntegrityError):
+            integrity_errors += 1
+    config_item = outputs.get("running_config")
+    findings = _config_rules(config_item[1] if config_item else None, config_item[0] if config_item else None)
+    findings.append(_finding("CISCO.TRANSPORT.TELNET", "MANAGEMENT", "HIGH", "FAIL" if job.device.transport == "TELNET" else "PASS", "Collector management transport", "Collector access uses clear-text Telnet under an approved exception." if job.device.transport == "TELNET" else "Collector access uses SSH with a pinned host key.", "Migrate the management plane to SSH and revoke the Telnet exception." if job.device.transport == "TELNET" else ""))
+    findings.append(_output_rule(outputs, "time_sync", "CISCO.TIME.NTP_STATE", "TIME", "MEDIUM", "NTP synchronization evidence", r"^[*+#o]", "At least one selected/valid NTP association was observed.", "No selected NTP association was identified in command output.", "Verify reachability, synchronization and approved NTP sources."))
+    findings.append(_output_rule(outputs, "logging_posture", "CISCO.LOGGING.ACTIVE", "LOGGING", "MEDIUM", "Logging operational state", r"logging to|trap logging|syslog logging", "Operational logging output was observed.", "Operational output did not demonstrate active remote logging.", "Verify the remote collector path and receipt on the logging platform."))
+    findings.append(_finding("CISCO.PSIRT.CORRELATION", "VULNERABILITY", "HIGH", "UNKNOWN", "Cisco security advisory correlation", f"Device release {job.discovered_release or 'UNKNOWN'} was identified, but no reviewed Cisco advisory feed is installed.", "Integrate and review the official Cisco advisory feed before asserting affected/not-affected status.", outputs.get("platform_version", (None,))[0]))
+    if integrity_errors:
+        findings.append(_finding("CISCO.EVIDENCE.INTEGRITY", "EVIDENCE", "CRITICAL", "ERROR", "Snapshot integrity/read failure", f"{integrity_errors} successful command snapshot(s) could not be authenticated and read.", "Investigate encrypted evidence storage and recollect."))
+    TechnicalFinding.objects.bulk_create([TechnicalFinding(tenant=job.tenant, assessment=assessment, **item) for item in findings])
+    counts = {state: sum(1 for item in findings if item["result"] == state) for state in TechnicalFinding.Result.values}
+    overall = "ERROR" if counts["ERROR"] else ("FAIL" if counts["FAIL"] else ("WARNING" if counts["WARNING"] else ("UNKNOWN" if counts["UNKNOWN"] else "PASS")))
+    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts}
+    assessment.result = overall; assessment.facts = facts
+    assessment.save(update_fields=["result", "facts"])
+    AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.assessment_completed", object_type="DeviceAssessment", object_id=str(assessment.id), metadata={"result": overall, "rule_pack": RULE_PACK, "rule_pack_version": RULE_PACK_VERSION})
+    return assessment

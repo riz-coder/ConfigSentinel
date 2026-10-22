@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 
 
 class CollectorReadOnlyAdmin(admin.ModelAdmin):
@@ -20,5 +20,5 @@ class CredentialReferenceAdmin(CollectorReadOnlyAdmin):
     list_display = ("name", "provider", "tenant", "is_active", "created_at")
 
 
-for model in (Device, CollectorAgent, CommandProfile, CommandDefinition, ScopeGrant, CollectionJob, CommandExecution, RawSnapshot):
+for model in (Device, CollectorAgent, CommandProfile, CommandDefinition, ScopeGrant, CollectionJob, CommandExecution, RawSnapshot, DeviceAssessment, TechnicalFinding):
     admin.site.register(model, CollectorReadOnlyAdmin)

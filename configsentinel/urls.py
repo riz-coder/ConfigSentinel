@@ -18,8 +18,8 @@ from apps.regulatory.api import (
 from apps.regulatory.views import audit_report, auditor_report_download, auditor_room, corrective_action_center, dashboard, mapping_center, regulatory_center
 from apps.evidence.api import EvidenceArtifactViewSet
 from apps.evidence.views import evidence_center, evidence_download
-from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandExecutionViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceViewSet, RawSnapshotViewSet, ScopeGrantViewSet
-from apps.collector.views import collector_center
+from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandExecutionViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceAssessmentViewSet, DeviceViewSet, RawSnapshotViewSet, ScopeGrantViewSet, TechnicalFindingViewSet
+from apps.collector.views import collector_center, device_assessment_report
 from apps.security.views import MFASetupView, MFAVerifyView
 from apps.inventory.api import AssetDependencyViewSet, AssetViewSet, CriticalServiceViewSet, SiteViewSet
 from apps.inventory.views import inventory_center, inventory_template_csv, inventory_template_xlsx
@@ -54,6 +54,8 @@ router.register("scope-grants", ScopeGrantViewSet, basename="scope-grant")
 router.register("collection-jobs", CollectionJobViewSet, basename="collection-job")
 router.register("command-executions", CommandExecutionViewSet, basename="command-execution")
 router.register("raw-snapshots", RawSnapshotViewSet, basename="raw-snapshot")
+router.register("device-assessments", DeviceAssessmentViewSet, basename="device-assessment")
+router.register("technical-findings", TechnicalFindingViewSet, basename="technical-finding")
 
 urlpatterns = [
     path("health/", lambda request: JsonResponse({"status": "ok"}), name="health"),
@@ -76,6 +78,7 @@ urlpatterns = [
     path("evidence/", evidence_center, name="evidence-center"),
     path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
     path("collector/", collector_center, name="collector-center"),
+    path("collector/assessments/<uuid:assessment_id>/", device_assessment_report, name="device-assessment-report"),
     path("workspace/users/", user_management, name="user-management"),
     path("", dashboard, name="dashboard"),
 ]

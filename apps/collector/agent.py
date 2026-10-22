@@ -17,6 +17,7 @@ from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutExc
 from apps.auditlog.models import AuditEvent
 from apps.evidence.vault import LocalEncryptedObjectStore, VaultError
 
+from .assessment import assess_cisco_job
 from .models import CollectionJob, CommandExecution, Device, RawSnapshot, ScopeGrant
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
 
@@ -243,6 +244,7 @@ def run_collection_job(job_id, *, secret_store=None, evidence_store=None, connec
                 non_success = True; break
         _transition(job, CollectionJob.State.PARSING)
         _transition(job, CollectionJob.State.ASSESSING)
+        assess_cisco_job(job.id, evidence_store=evidence_store)
         _transition(job, CollectionJob.State.PARTIAL if non_success else CollectionJob.State.COMPLETE, finished=True)
         AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.job_finished", object_type="CollectionJob", object_id=str(job.id), metadata={"state": job.state, "snapshot_count": job.command_executions.filter(snapshot__isnull=False).count()})
         return job

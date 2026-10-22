@@ -2,6 +2,26 @@
 
 ## Current work package
 
+`WP-NET-03` — Cisco IOS/IOS-XE parsing and technical assessment baseline.
+
+- Decrypt and integrity-check completed Cisco command snapshots locally, parse
+  only bounded structured facts, and link every finding to its command evidence.
+- Evaluate versioned deterministic configuration/security rules with explicit
+  PASS/FAIL/WARNING/UNKNOWN/NOT_APPLICABLE/ERROR results.
+- Generate a tenant-scoped device report covering identity, command coverage,
+  configuration/security gaps, operations and topology observations.
+- Keep Cisco advisory correlation UNKNOWN until a reviewed official advisory
+  feed and exact release/platform matching are implemented.
+
+Implementation status: complete for the bounded deterministic Cisco baseline.
+Successful collection invokes a versioned rule pack and produces a tenant report
+with evidence-linked technical results. Initial checks cover management-plane,
+AAA, logging, NTP, SNMP and snapshot integrity. Raw configuration is not
+rendered. Interface/VLAN/STP/routing/topology parsers, official PSIRT ingestion
+and real-firmware validation remain follow-on Cisco work.
+
+### Previous work package
+
 `WP-CORE-03` — tenant owner-controlled user lifecycle.
 
 - Exactly one active tenant owner controls user creation, access disablement,

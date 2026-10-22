@@ -1,7 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -9,7 +9,7 @@ from apps.inventory.models import Asset
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
-from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
 from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, register_agent, register_credential_reference, register_device, request_collection
 
 
@@ -91,3 +91,10 @@ def collector_center(request):
         "profiles": CommandProfile.objects.filter(tenant=tenant).prefetch_related("commands"),
         "jobs": CollectionJob.objects.filter(tenant=tenant).select_related("device")[:25],
     })
+
+
+@login_required
+def device_assessment_report(request, assessment_id):
+    tenant = tenant_for_request(request)
+    assessment = get_object_or_404(DeviceAssessment.objects.select_related("job__device").prefetch_related("findings__evidence_execution__command"), tenant=tenant, pk=assessment_id)
+    return render(request, "collector/assessment_report.html", {"tenant": tenant, "assessment": assessment, "findings": assessment.findings.order_by("category", "rule_id")})

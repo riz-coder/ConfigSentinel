@@ -89,9 +89,15 @@ and collector links; administrator access; tenant-to-tenant boundary.
   free-form or modified manifests cannot pass approval.
 - SSH remains the default with a pinned host key. Telnet requires a written risk
   exception and different approver, and is never an automatic fallback.
-- No transport or command execution exists in the Django control plane,
-  eliminating network side effects while signed outbound-agent execution,
-  vault resolution and real-firmware parser fixtures are unfinished.
+- No transport or command execution occurs in a Django web request. The
+  explicitly invoked local agent enforces approvals, budgets and its exact
+  allowlist; signed remote-agent delivery and real-firmware validation remain.
+- Cisco parser/rule manipulation is bounded by authenticated encrypted
+  snapshots, deterministic versioned checks and evidence hashes; raw device
+  configuration is not rendered in reports.
+- Detected releases are inventory facts only. Vulnerability applicability stays
+  UNKNOWN until an official reviewed Cisco advisory feed and exact matcher are
+  installed.
 
 # WP-ASSET tenant inventory boundary
 
