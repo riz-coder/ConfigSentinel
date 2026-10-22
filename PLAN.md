@@ -2,6 +2,26 @@
 
 ## Current work package
 
+`WP-CORE-03` — tenant owner-controlled user lifecycle.
+
+- Exactly one active tenant owner controls user creation, access disablement,
+  temporary password resets and explicit ownership transfer.
+- Preserve attributable history by disabling memberships instead of deleting
+  referenced user rows; prevent owner self-disable and last-owner removal.
+- Require the current owner's password for ownership transfer and record every
+  lifecycle action in the append-only tenant audit log.
+- Provide a tenant-scoped owner-only UI and tests for authorization, password
+  validation, session invalidation behavior and separation of duties.
+
+Implementation status: complete for the bounded owner lifecycle. The owner-only
+Users screen creates non-owner memberships, resets temporary passwords, disables
+access without deleting attributable history, and transfers the single active
+owner role only after current-password verification. Every mutation is audited.
+Focused tenancy tests passed 8/8; the full local suite passed 121 tests with 6
+PostgreSQL-only tests skipped.
+
+### Previous work package
+
 `WP-NET-02` — local/on-prem outbound collector execution slice.
 
 ### Current bounded change: safe Cisco IOS/IOS-XE live collection

@@ -23,6 +23,7 @@ from apps.collector.views import collector_center
 from apps.security.views import MFASetupView, MFAVerifyView
 from apps.inventory.api import AssetDependencyViewSet, AssetViewSet, CriticalServiceViewSet, SiteViewSet
 from apps.inventory.views import inventory_center, inventory_template_csv, inventory_template_xlsx
+from apps.tenancy.views import user_management
 
 router = DefaultRouter()
 router.register("regulatory-sources", RegulatorySourceViewSet, basename="regulatory-source")
@@ -75,6 +76,7 @@ urlpatterns = [
     path("evidence/", evidence_center, name="evidence-center"),
     path("evidence/<uuid:artifact_id>/download/", evidence_download, name="evidence-download"),
     path("collector/", collector_center, name="collector-center"),
+    path("workspace/users/", user_management, name="user-management"),
     path("", dashboard, name="dashboard"),
 ]
 
