@@ -1,0 +1,9 @@
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Software
+  BIOS: version 05.47
+  NXOS: version 10.3(4a)
+Hardware
+  cisco Nexus9000 C93180YC-FX3 Chassis (Nexus 9000 Series)
+  Intel(R) Xeon(R) CPU with 24562744 kB of memory.
+Device name: LAB-N9K-01

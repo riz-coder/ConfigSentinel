@@ -43,8 +43,13 @@ class PlatformIdentity:
 
 def parse_cisco_show_version(output):
     text = str(output or "")
-    if "cisco" not in text.lower() or ("ios" not in text.lower() and "internetwork operating system" not in text.lower()):
+    lowered = text.lower()
+    if "cisco" not in lowered or ("ios" not in lowered and "nx-os" not in lowered and "nxos" not in lowered and "internetwork operating system" not in lowered):
         raise CollectorExecutionError("UNSUPPORTED_PLATFORM_OUTPUT")
+    if "nx-os" in lowered or "nxos" in lowered:
+        release_match = re.search(r"(?:NXOS|NX-OS)\s*:\s*version\s+(\S+)", text, re.I) or re.search(r"system:\s+version\s+(\S+)", text, re.I)
+        model_match = re.search(r"^cisco\s+(N\S+).*Chassis", text, re.I | re.M) or re.search(r"^Hardware\s*\n\s+cisco\s+(\S+)", text, re.I | re.M)
+        return PlatformIdentity(vendor=Device.Vendor.CISCO, platform="NX-OS", model=model_match.group(1) if model_match else "UNKNOWN", release=release_match.group(1) if release_match else "UNKNOWN")
     release_match = re.search(r"(?:Cisco IOS XE Software|Cisco IOS Software|Version)\s*(?:,|\()?[\w ()/-]*?Version\s+([^,\s]+)", text, re.I)
     if not release_match:
         release_match = re.search(r"\bVersion\s+([^,\s]+)", text, re.I)
@@ -72,7 +77,8 @@ def probe_ssh_host_key(host, port, timeout=10):
 
 class NetmikoSession:
     def __init__(self, *, device, credential, verified_host_key=None, timeout=10):
-        device_type = "cisco_ios_telnet" if device.transport == Device.Transport.TELNET else "cisco_ios"
+        nxos = device.platform.upper().replace(" ", "-") in {"NXOS", "NX-OS"}
+        device_type = ("cisco_nxos_telnet" if device.transport == Device.Transport.TELNET else "cisco_nxos") if nxos else ("cisco_ios_telnet" if device.transport == Device.Transport.TELNET else "cisco_ios")
         arguments = {
             "device_type": device_type, "host": str(device.management_address), "port": device.ssh_port,
             "username": credential["username"], "password": credential["password"],
@@ -225,7 +231,8 @@ def run_collection_job(job_id, *, secret_store=None, evidence_store=None, connec
         if execution.state != CommandExecution.State.SUCCEEDED:
             raise CollectorExecutionError("PLATFORM_DISCOVERY_FAILED")
         identity = parse_cisco_show_version(output)
-        if device.vendor != identity.vendor or device.platform.upper().replace(" ", "-") not in {identity.platform, "IOS_IOS_XE"}:
+        expected_platform = device.platform.upper().replace("_", "-").replace(" ", "-")
+        if device.vendor != identity.vendor or (identity.platform == "NX-OS" and expected_platform not in {"NXOS", "NX-OS"}) or (identity.platform in {"IOS", "IOS-XE"} and expected_platform not in {identity.platform, "IOS-IOS-XE"}):
             raise CollectorExecutionError("DISCOVERED_PLATFORM_MISMATCH")
         job.discovered_vendor, job.discovered_platform, job.discovered_model, job.discovered_release = identity.vendor, identity.platform, identity.model, identity.release
         job.save(update_fields=["discovered_vendor", "discovered_platform", "discovered_model", "discovered_release"])

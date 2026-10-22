@@ -50,3 +50,18 @@ Every finding links to the exact command execution and output hash. Missing,
 unsupported or unreadable commands return UNKNOWN/ERROR rather than PASS. Cisco
 PSIRT/advisory correlation remains UNKNOWN until an official reviewed feed,
 exact platform/release matching and update governance are implemented.
+
+## Cisco Nexus NX-OS profile
+
+NX-OS uses a separate version-1 manifest and Netmiko device type. Its 22 exact
+commands cover version/running configuration, interfaces, CDP/LLDP, VLAN/STP,
+port channels, routing/features, OSPF/BGP, AAA/SSH, logging, NTP, SNMP, ACLs and
+system resources. The profile is based on Cisco Nexus 9000 NX-OS show-command
+and system-management references, remains independently approved per tenant,
+and still requires real-device firmware validation.
+
+Customer commands are not accepted as free-form job input. A future extension
+workflow may add an exact read-only command to a new draft profile version only
+after safety validation and independent network-engineering approval. This
+prevents a local operator from turning the collector into a configuration or
+arbitrary-command channel.

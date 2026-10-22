@@ -21,7 +21,7 @@ from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
-from .services import CISCO_IOS_XE_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_profile, register_agent, register_device, request_collection
+from .services import CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_profile, register_agent, register_device, request_collection
 
 
 class CollectorBoundaryTests(TestCase):
@@ -161,6 +161,13 @@ class CollectorBoundaryTests(TestCase):
         with self.assertRaisesMessage(ValidationError, "same tenant"):
             register_device(tenant=self.tenant, actor=self.owner, asset=foreign_asset, name="Bad binding", vendor=Device.Vendor.CISCO, platform="IOS", management_address="192.0.2.30", transport=Device.Transport.SSH, port=22, pinned_host_key_sha256="SHA256:synthetic-foreign-host-key")
 
+    def test_nxos_device_installs_separate_exact_profile(self):
+        device = register_device(tenant=self.tenant, actor=self.owner, asset=self.asset, name="Synthetic Nexus", vendor=Device.Vendor.CISCO, platform="NXOS", management_address="192.0.2.31", transport=Device.Transport.SSH, port=22, pinned_host_key_sha256="SHA256:synthetic-nxos-host-key")
+        profile = CommandProfile.objects.get(tenant=self.tenant, name="Cisco NX-OS baseline")
+        self.assertEqual(profile.platform, "NX-OS")
+        self.assertEqual(tuple(profile.commands.values_list("key", "command_text", "purpose", "contains_sensitive_output")), CISCO_NXOS_READ_ONLY_COMMANDS)
+        self.assertEqual(device.platform, "NXOS")
+
 
 class CollectorAgentExecutionTests(TestCase):
     def setUp(self):
@@ -191,6 +198,11 @@ class CollectorAgentExecutionTests(TestCase):
     def test_show_version_fixture_is_parsed_deterministically(self):
         identity = parse_cisco_show_version(self.version_output)
         self.assertEqual((identity.vendor, identity.platform, identity.model, identity.release), (Device.Vendor.CISCO, "IOS-XE", "C9300-24T", "17.09.04a"))
+
+    def test_nxos_show_version_fixture_is_parsed_deterministically(self):
+        output = (Path(__file__).with_name("fixtures") / "cisco_nxos_show_version_10_3.txt").read_text(encoding="utf-8")
+        identity = parse_cisco_show_version(output)
+        self.assertEqual((identity.vendor, identity.platform, identity.model, identity.release), (Device.Vendor.CISCO, "NX-OS", "Nexus9000", "10.3(4a)"))
 
     def test_agent_secret_store_encrypts_and_authenticates(self):
         with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=self.secret_key, COLLECTOR_SECRET_ROOT=directory):

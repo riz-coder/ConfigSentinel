@@ -2,6 +2,18 @@
 
 ## Current work package
 
+`WP-NET-04` — Cisco NX-OS collection-profile foundation.
+
+- Add a separate integrity-hashed Nexus NX-OS read-only command manifest,
+  platform discovery and Netmiko transport selection; never run the IOS profile
+  against a device registered/discovered as NX-OS.
+- Retain independent command-profile approval and explicit UNKNOWN results for
+  unsupported feature-dependent commands.
+- Keep customer-added commands out of running jobs until a bounded validation,
+  versioning and two-person approval workflow is implemented.
+
+### Previous work package
+
 `WP-NET-03` — Cisco IOS/IOS-XE parsing and technical assessment baseline.
 
 - Decrypt and integrity-check completed Cisco command snapshots locally, parse

@@ -36,6 +36,31 @@ CISCO_IOS_XE_READ_ONLY_COMMANDS = (
     ("memory", "show processes memory sorted", CommandDefinition.Purpose.OPERATIONS, False),
 )
 
+CISCO_NXOS_READ_ONLY_COMMANDS = (
+    ("platform_version", "show version", CommandDefinition.Purpose.DISCOVERY, False),
+    ("running_config", "show running-config", CommandDefinition.Purpose.CONFIGURATION, True),
+    ("interfaces_brief", "show interface brief", CommandDefinition.Purpose.DISCOVERY, False),
+    ("interfaces_detail", "show interface", CommandDefinition.Purpose.OPERATIONS, False),
+    ("interfaces_status", "show interface status", CommandDefinition.Purpose.OPERATIONS, False),
+    ("cdp_topology", "show cdp neighbors detail", CommandDefinition.Purpose.TOPOLOGY, False),
+    ("lldp_topology", "show lldp neighbors detail", CommandDefinition.Purpose.TOPOLOGY, False),
+    ("vlans", "show vlan brief", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("spanning_tree", "show spanning-tree summary", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("etherchannel", "show port-channel summary", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("routes", "show ip route", CommandDefinition.Purpose.OPERATIONS, False),
+    ("routing_protocols", "show feature", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("ospf_neighbors", "show ip ospf neighbors", CommandDefinition.Purpose.OPERATIONS, False),
+    ("bgp_summary", "show bgp all summary", CommandDefinition.Purpose.OPERATIONS, False),
+    ("aaa_servers", "show aaa servers", CommandDefinition.Purpose.SECURITY, False),
+    ("ssh_posture", "show ssh server", CommandDefinition.Purpose.SECURITY, False),
+    ("logging_posture", "show logging server", CommandDefinition.Purpose.SECURITY, True),
+    ("time_sync", "show ntp peer-status", CommandDefinition.Purpose.SECURITY, False),
+    ("snmp_posture", "show snmp", CommandDefinition.Purpose.SECURITY, True),
+    ("access_lists", "show access-lists", CommandDefinition.Purpose.SECURITY, True),
+    ("cpu", "show system resources", CommandDefinition.Purpose.OPERATIONS, False),
+    ("memory", "show processes memory", CommandDefinition.Purpose.OPERATIONS, False),
+)
+
 
 def _profile_manifest(commands):
     payload = [{"key": key, "command": command, "purpose": purpose, "sensitive": sensitive} for key, command, purpose, sensitive in commands]
@@ -64,6 +89,8 @@ def register_device(*, tenant, actor, asset, name, vendor, platform, management_
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.device_created", object_type="Device", object_id=str(device.id), metadata={"transport": device.transport, "asset_id": str(asset.id) if asset else None})
     if device.vendor == Device.Vendor.CISCO and device.platform.upper().replace(" ", "-") in {"IOS", "IOS-XE", "IOS_IOS_XE"}:
         install_cisco_ios_xe_profile(tenant=tenant, actor=actor)
+    elif device.vendor == Device.Vendor.CISCO and device.platform.upper().replace(" ", "-") in {"NXOS", "NX-OS"}:
+        install_cisco_nxos_profile(tenant=tenant, actor=actor)
     return device
 
 
@@ -141,6 +168,23 @@ def install_cisco_ios_xe_profile(*, tenant, actor):
 
 
 @transaction.atomic
+def install_cisco_nxos_profile(*, tenant, actor):
+    _operator(actor, tenant)
+    commands = CISCO_NXOS_READ_ONLY_COMMANDS
+    profile, created = CommandProfile.objects.get_or_create(
+        tenant=tenant, name="Cisco NX-OS baseline", version=1,
+        defaults={"vendor": Device.Vendor.CISCO, "platform": "NX-OS", "manifest_sha256": _profile_manifest(commands), "command_count": len(commands), "created_by": actor},
+    )
+    if created:
+        CommandDefinition.objects.bulk_create([
+            CommandDefinition(tenant=tenant, profile=profile, key=key, command_text=command, purpose=purpose, sequence=index, contains_sensitive_output=sensitive)
+            for index, (key, command, purpose, sensitive) in enumerate(commands, start=1)
+        ])
+        AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.profile_installed", object_type="CommandProfile", object_id=str(profile.id), metadata={"manifest_sha256": profile.manifest_sha256, "command_count": profile.command_count})
+    return profile, created
+
+
+@transaction.atomic
 def approve_command_profile(*, profile, actor, approval_reference):
     _operator(actor, profile.tenant)
     profile = CommandProfile.objects.select_for_update().get(pk=profile.pk)
@@ -151,7 +195,8 @@ def approve_command_profile(*, profile, actor, approval_reference):
         raise ValidationError("A network-engineering/code-review signoff reference is required.")
     commands = list(profile.commands.order_by("sequence"))
     actual = tuple((item.key, item.command_text, item.purpose, item.contains_sensitive_output) for item in commands)
-    if profile.vendor != Device.Vendor.CISCO or profile.platform != "IOS_IOS_XE" or actual != CISCO_IOS_XE_READ_ONLY_COMMANDS:
+    expected = CISCO_IOS_XE_READ_ONLY_COMMANDS if profile.platform == "IOS_IOS_XE" else (CISCO_NXOS_READ_ONLY_COMMANDS if profile.platform == "NX-OS" else None)
+    if profile.vendor != Device.Vendor.CISCO or expected is None or actual != expected:
         raise ValidationError("Profile commands do not exactly match the reviewed Cisco IOS/IOS-XE read-only allowlist.")
     if profile.command_count != len(actual) or profile.manifest_sha256 != _profile_manifest(actual):
         raise ValidationError("Command-profile count or manifest integrity check failed.")
@@ -200,7 +245,8 @@ def request_collection(*, tenant, actor, device, agent, scope_grant, command_pro
         raise ValidationError("A separately reviewed, non-empty command profile is required.")
     if command_profile.command_count > scope_grant.max_commands:
         raise ValidationError("The approved scope command budget is smaller than this command profile.")
-    supported_platform = command_profile.platform == device.platform or (command_profile.platform == "IOS_IOS_XE" and device.platform.upper() in {"IOS", "IOS-XE", "IOS XE", "IOS_IOS_XE"})
+    normalized = device.platform.upper().replace("_", "-").replace(" ", "-")
+    supported_platform = command_profile.platform.upper() == normalized or (command_profile.platform == "IOS_IOS_XE" and normalized in {"IOS", "IOS-XE", "IOS-IOS-XE"}) or (command_profile.platform == "NX-OS" and normalized in {"NXOS", "NX-OS"})
     if command_profile.vendor != device.vendor or not supported_platform:
         raise ValidationError("The command profile does not support this device platform.")
     if device.transport == Device.Transport.TELNET and not device.telnet_approved_at:

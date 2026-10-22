@@ -62,8 +62,8 @@ def _output_rule(outputs, key, rule_id, category, severity, title, good_pattern,
 def assess_cisco_job(job_id, *, evidence_store=None):
     evidence_store = evidence_store or LocalEncryptedObjectStore()
     job = CollectionJob.objects.select_for_update().select_related("tenant", "device").get(pk=job_id)
-    if job.discovered_vendor != "CISCO" or job.discovered_platform not in {"IOS", "IOS-XE"}:
-        raise ValueError("Only discovered Cisco IOS/IOS-XE jobs are supported by this rule pack.")
+    if job.discovered_vendor != "CISCO" or job.discovered_platform not in {"IOS", "IOS-XE", "NX-OS"}:
+        raise ValueError("Only discovered Cisco IOS/IOS-XE/NX-OS jobs are supported by this rule pack.")
     existing = DeviceAssessment.objects.filter(job=job).first()
     if existing is not None:
         return existing

@@ -60,7 +60,9 @@ def collector_center(request):
                 messages.success(request, "Collection scope independently approved.")
             elif operation == "queue_collection":
                 grant = ScopeGrant.objects.select_related("device", "agent").get(tenant=tenant, pk=request.POST["scope_id"])
-                profile = CommandProfile.objects.filter(tenant=tenant, vendor=grant.device.vendor, status=CommandProfile.Status.APPROVED).first()
+                normalized = grant.device.platform.upper().replace("_", "-").replace(" ", "-")
+                candidates = CommandProfile.objects.filter(tenant=tenant, vendor=grant.device.vendor, status=CommandProfile.Status.APPROVED)
+                profile = next((item for item in candidates if item.platform.upper() == normalized or (item.platform == "IOS_IOS_XE" and normalized in {"IOS", "IOS-XE", "IOS-IOS-XE"}) or (item.platform == "NX-OS" and normalized in {"NXOS", "NX-OS"})), None)
                 if profile is None:
                     raise ValidationError("No independently approved command profile supports this device yet.")
                 request_collection(tenant=tenant, actor=request.user, device=grant.device, agent=grant.agent, scope_grant=grant, command_profile=profile, observed_host_key_sha256=grant.device.pinned_host_key_sha256)
