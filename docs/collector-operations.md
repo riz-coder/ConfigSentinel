@@ -1,5 +1,18 @@
 # Read-only collector foundation operations
 
+## WP-NET-01 collection-plan capability
+
+The control plane can now bind a device to an active tenant asset, record SSH
+or an independently approved legacy Telnet exception, save an opaque
+ISP-controlled vault reference and install a versioned Cisco IOS/IOS-XE
+collection manifest. The manifest exposes every exact command, purpose,
+sensitive-output flag, count and SHA-256 digest before approval.
+
+Telnet devices are created blocked. A different owner/compliance lead must
+approve the recorded exception and clear-text transport-risk acknowledgement.
+SSH always requires a separately verified pinned host key; no SSH-to-Telnet
+downgrade exists.
+
 ## What an operator enters
 
 1. Device name, vendor/platform, management address and an SSH SHA256 host-key
@@ -14,10 +27,12 @@
 
 ## Current safety stop
 
-No vendor commands are bundled and no networking library is invoked. Command
-profiles created through the API are drafts. Do not change an agent or command
-profile to approved in production: signed enrollment, command review, firmware
-fixtures and explicit operator signoff are not yet implemented.
+The reviewed Cisco command plan is bundled, but no networking library or live
+socket is invoked. Profile approval means only that its exact allowlist and
+manifest passed two-person review with a recorded network-engineering/code-review
+signoff reference. It is not permission to run from the Django
+server. Signed agent enrollment, agent job claim, production vault resolution,
+encrypted output ingestion and real-firmware parser fixtures remain required.
 
 Use `/collector/` for the setup/readiness view and `/api/v1/openapi/` for API
 contracts. Collection jobs always begin with technical result `UNKNOWN`; no

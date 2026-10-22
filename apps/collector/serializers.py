@@ -1,13 +1,13 @@
 from rest_framework import serializers
 
-from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandProfile, CredentialReference, Device, ScopeGrant
 
 
 class DeviceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Device
         exclude = ["tenant", "created_by"]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "is_active", "telnet_approved_by", "telnet_approved_at", "created_at"]
 
 
 class CredentialReferenceSerializer(serializers.ModelSerializer):
@@ -26,11 +26,20 @@ class CollectorAgentSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "status", "created_at"]
 
 
+class CommandDefinitionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CommandDefinition
+        fields = ["id", "key", "command_text", "purpose", "sequence", "contains_sensitive_output"]
+        read_only_fields = fields
+
+
 class CommandProfileSerializer(serializers.ModelSerializer):
+    commands = CommandDefinitionSerializer(many=True, read_only=True)
+
     class Meta:
         model = CommandProfile
         exclude = ["tenant", "created_by", "approved_by"]
-        read_only_fields = ["id", "status", "approved_at", "created_at"]
+        read_only_fields = ["id", "status", "approved_at", "approval_reference", "created_at", "manifest_sha256", "command_count", "commands"]
 
 
 class ScopeGrantSerializer(serializers.ModelSerializer):

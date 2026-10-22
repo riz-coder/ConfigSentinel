@@ -9,7 +9,7 @@ from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
 from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceSerializer, ScopeGrantSerializer
-from .services import approve_scope, request_collection
+from .services import approve_command_profile, approve_scope, approve_telnet_device, install_cisco_ios_xe_profile, request_collection
 
 
 class TenantCollectorViewSet:
@@ -41,7 +41,25 @@ class DeviceViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.Retrie
         return Device.objects.filter(tenant=self.tenant())
 
     def perform_create(self, serializer):
-        self.save_new(serializer, "created_by")
+        self.require_operator()
+        transport = serializer.validated_data.get("transport", Device.Transport.SSH)
+        obj = serializer.save(tenant=self.tenant(), created_by=self.request.user, is_active=transport != Device.Transport.TELNET)
+        try:
+            obj.full_clean()
+            obj.save()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages)
+        AuditEvent.objects.create(tenant=obj.tenant, actor=self.request.user, action="collector.device_created", object_type="Device", object_id=str(obj.pk), metadata={"transport": obj.transport})
+
+    @action(detail=True, methods=["post"])
+    def approve_telnet(self, request, pk=None):
+        try:
+            device = approve_telnet_device(device=self.get_object(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return Response(self.get_serializer(device).data)
 
 
 class CredentialReferenceViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -72,6 +90,24 @@ class CommandProfileViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixin
 
     def perform_create(self, serializer):
         self.save_new(serializer, "created_by")
+
+    @action(detail=False, methods=["post"])
+    def install_cisco_ios_xe(self, request):
+        try:
+            profile, created = install_cisco_ios_xe_profile(tenant=self.tenant(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        return Response(self.get_serializer(profile).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        try:
+            profile = approve_command_profile(profile=self.get_object(), actor=request.user, approval_reference=request.data.get("approval_reference"))
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return Response(self.get_serializer(profile).data)
 
 
 class ScopeGrantViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):

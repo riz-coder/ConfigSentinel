@@ -11,10 +11,16 @@ and collection jobs as separate tenant-scoped records. A job is admitted only
 when every exact relationship and time window is valid and the observed SSH host
 key equals the out-of-band pinned fingerprint.
 
-This package contains no socket, subprocess, SSH/API client or vendor command.
-Command profiles remain non-executable drafts unless a later signed manifest is
-reviewed by network engineering and explicitly approved by an operator. Raw
+The Django control plane contains no socket, subprocess or SSH/Telnet client.
+WP-NET-01 adds exact versioned command definitions and a reviewed Cisco
+IOS/IOS-XE manifest, but execution remains an outbound-agent responsibility.
+Profiles require integrity verification, a network-engineering/code-review
+signoff reference and approval by someone other than the installer. Raw
 credentials are never stored or returned; only secrets-manager references exist.
+
+SSH is the default and requires a pinned host key. Telnet is represented only
+as a blocked legacy exception with written rationale and independent approval;
+there is no automatic downgrade. A device is linked to an active tenant asset.
 
 Collection success means only that collection data was received. It is not a
 technical PASS and never implies legal compliance. Missing or failed collection

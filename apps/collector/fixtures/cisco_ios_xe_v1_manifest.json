@@ -1,0 +1,29 @@
+{
+  "vendor": "CISCO",
+  "platform": "IOS_IOS_XE",
+  "version": 1,
+  "commands": [
+    ["platform_version", "show version", "DISCOVERY", false],
+    ["running_config", "show running-config", "CONFIGURATION", true],
+    ["interfaces_brief", "show ip interface brief", "DISCOVERY", false],
+    ["interfaces_detail", "show interfaces", "OPERATIONS", false],
+    ["interfaces_status", "show interfaces status", "OPERATIONS", false],
+    ["cdp_topology", "show cdp neighbors detail", "TOPOLOGY", false],
+    ["lldp_topology", "show lldp neighbors detail", "TOPOLOGY", false],
+    ["vlans", "show vlan brief", "CONFIGURATION", false],
+    ["spanning_tree", "show spanning-tree summary", "CONFIGURATION", false],
+    ["etherchannel", "show etherchannel summary", "CONFIGURATION", false],
+    ["routes", "show ip route", "OPERATIONS", false],
+    ["routing_protocols", "show ip protocols", "CONFIGURATION", false],
+    ["ospf_neighbors", "show ip ospf neighbor", "OPERATIONS", false],
+    ["bgp_summary", "show ip bgp summary", "OPERATIONS", false],
+    ["aaa_servers", "show aaa servers", "SECURITY", false],
+    ["ssh_posture", "show ip ssh", "SECURITY", false],
+    ["logging_posture", "show logging", "SECURITY", true],
+    ["time_sync", "show ntp associations", "SECURITY", false],
+    ["snmp_posture", "show snmp", "SECURITY", true],
+    ["access_lists", "show access-lists", "SECURITY", true],
+    ["cpu", "show processes cpu sorted 5sec", "OPERATIONS", false],
+    ["memory", "show processes memory sorted", "OPERATIONS", false]
+  ]
+}

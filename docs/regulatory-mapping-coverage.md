@@ -82,6 +82,14 @@ The standard import schema covers the minimum asset-register attribute groups
 transcribed from Regulation 11(3) of the uploaded source copy, but remains an
 operational template under `SOURCE_PENDING`, not a regulator-issued form.
 
+## Device evidence candidates
+
+The Cisco IOS/IOS-XE collection manifest groups device evidence into discovery,
+configuration, security, topology and operations. Candidate clause headings are
+documented in `docs/cisco-ios-xe-collector-profile.md`, but no command is mapped
+as legal proof while the exact source/subclause and obligation mapping remain
+unapproved. A technical result and legal readiness remain separate states.
+
 For operational triage, less than 50% preliminary evidence coverage is shown
 as `NON_COMPLIANT` and 50–99% as `PARTIAL`. At 100%, the UI remains
 `PARTIAL` with `EVIDENCE_COMPLETE_LEGAL_REVIEW_PENDING` unless the source,

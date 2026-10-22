@@ -2,6 +2,46 @@
 
 ## Current work package
 
+`WP-NET-01` — reviewed Cisco collection-plan foundation.
+
+### Current bounded change: safe device assessment planning
+
+- Link a collector device to one active tenant asset and record SSH or explicit
+  legacy Telnet transport without storing raw credentials in the control plane.
+- Represent every Cisco IOS/IOS-XE command as an exact, versioned command row;
+  reject free-form or configuration-mode commands and require independent
+  operator approval before a profile can be queued.
+- Separate discovery, configuration, security, topology and operational command
+  purposes; expose the exact planned command list and CDP/LLDP topology intent.
+- Keep live network execution blocked until the outbound signed agent, vault
+  resolver, encrypted snapshots, parser fixtures and job claim protocol exist.
+- Treat all candidate device-to-regulation links as `SOURCE_PENDING`; technical
+  output cannot create a legal compliance result.
+
+Acceptance tests: tenant isolation, asset binding, SSH host-key enforcement,
+Telnet exception validation, exact allowlist rejection, two-person profile
+approval, command-budget enforcement, no secret read-back, API/UI contracts and
+audit events. Security threats: credential leakage, command injection, silent
+SSH-to-Telnet downgrade, cross-tenant asset access, unreviewed command execution,
+concurrent device jobs, excessive output and legal-status inflation.
+
+Dependencies/blockers: production secrets manager, outbound mTLS collector,
+network-engineer review against actual supported Cisco firmware, anonymized
+real-device fixtures and dual-reviewed official clause mappings. These remain
+required before live collection or sold compliance claims.
+
+Implementation status: collection planning is complete for this bounded slice.
+The UI/API support asset-linked SSH devices, independently approved Telnet
+exceptions, opaque vault references and an integrity-hashed 22-command Cisco
+IOS/IOS-XE draft/approval workflow covering configuration, security, operations
+and CDP/LLDP topology intent. PostgreSQL RLS protects command rows and approved
+rows are database-immutable. Focused collector tests passed 13/13 and the full
+suite passed 111 tests with 6 PostgreSQL-only tests skipped on local SQLite. No live
+network connection, parser result, rule verdict or legal clause claim is
+implemented in this package.
+
+### Previous work package
+
 `WP-ASSET-01` — tenant asset, site and critical-service foundation.
 
 ### Current bounded change: asset/CII system of record

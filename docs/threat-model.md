@@ -65,8 +65,13 @@ and collector links; administrator access; tenant-to-tenant boundary.
 - Written scope is exact, time-bounded and independently approved; hard command,
   runtime and output ceilings are copied into each job.
 - A database constraint prevents concurrent active jobs per device.
-- No transport or command execution exists in this package, eliminating network
-  side effects while signed agents and reviewed command packs are unfinished.
+- Exact command definitions are integrity-hashed and independently approved;
+  free-form or modified manifests cannot pass approval.
+- SSH remains the default with a pinned host key. Telnet requires a written risk
+  exception and different approver, and is never an automatic fallback.
+- No transport or command execution exists in the Django control plane,
+  eliminating network side effects while signed outbound-agent execution,
+  vault resolution and real-firmware parser fixtures are unfinished.
 
 # WP-ASSET tenant inventory boundary
 

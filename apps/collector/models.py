@@ -6,9 +6,14 @@ from django.db import models
 from django.db.models import Q
 
 from apps.tenancy.models import Tenant
+from apps.inventory.models import Asset
 
 
 class Device(models.Model):
+    class Transport(models.TextChoices):
+        SSH = "SSH", "SSH"
+        TELNET = "TELNET", "Telnet (legacy exception)"
+
     class Vendor(models.TextChoices):
         CISCO = "CISCO", "Cisco"
         HUAWEI = "HUAWEI", "Huawei"
@@ -17,13 +22,19 @@ class Device(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="devices")
+    asset = models.ForeignKey(Asset, null=True, blank=True, on_delete=models.PROTECT, related_name="collector_devices")
     name = models.CharField(max_length=160)
     vendor = models.CharField(max_length=20, choices=Vendor.choices)
     platform = models.CharField(max_length=80, blank=True)
     software_release = models.CharField(max_length=80, blank=True)
     management_address = models.GenericIPAddressField()
+    transport = models.CharField(max_length=10, choices=Transport.choices, default=Transport.SSH)
     ssh_port = models.PositiveIntegerField(default=22)
-    pinned_host_key_sha256 = models.CharField(max_length=95)
+    pinned_host_key_sha256 = models.CharField(max_length=95, blank=True)
+    telnet_exception_reference = models.CharField(max_length=160, blank=True)
+    telnet_risk_acknowledgement = models.TextField(blank=True)
+    telnet_approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_telnet_devices")
+    telnet_approved_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -35,8 +46,15 @@ class Device(models.Model):
         ]
 
     def clean(self):
-        if not self.pinned_host_key_sha256.startswith("SHA256:") or len(self.pinned_host_key_sha256) < 20:
+        if self.asset_id and (self.asset.tenant_id != self.tenant_id or not self.asset.is_active):
+            raise ValidationError({"asset": "Device must link to an active asset in the same tenant."})
+        if self.transport == self.Transport.SSH and (not self.pinned_host_key_sha256.startswith("SHA256:") or len(self.pinned_host_key_sha256) < 20):
             raise ValidationError({"pinned_host_key_sha256": "A pinned SHA256 host-key fingerprint is required."})
+        if self.transport == self.Transport.TELNET:
+            if not self.telnet_exception_reference.strip() or len(self.telnet_risk_acknowledgement.strip()) < 20:
+                raise ValidationError("Telnet requires an exception reference and explicit transport-risk acknowledgement.")
+            if self.pinned_host_key_sha256:
+                raise ValidationError({"pinned_host_key_sha256": "Telnet has no SSH host key; do not enter a misleading fingerprint."})
 
     def __str__(self):
         return self.name
@@ -100,10 +118,41 @@ class CommandProfile(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_command_profiles")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_command_profiles")
     approved_at = models.DateTimeField(null=True, blank=True)
+    approval_reference = models.CharField(max_length=160, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["tenant", "name", "version"], name="unique_tenant_command_profile_version")]
+
+
+class CommandDefinition(models.Model):
+    class Purpose(models.TextChoices):
+        DISCOVERY = "DISCOVERY", "Platform discovery"
+        CONFIGURATION = "CONFIGURATION", "Configuration assessment"
+        SECURITY = "SECURITY", "Security posture"
+        TOPOLOGY = "TOPOLOGY", "Topology discovery"
+        OPERATIONS = "OPERATIONS", "Operational health"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="command_definitions")
+    profile = models.ForeignKey(CommandProfile, on_delete=models.PROTECT, related_name="commands")
+    key = models.CharField(max_length=80)
+    command_text = models.CharField(max_length=200)
+    purpose = models.CharField(max_length=20, choices=Purpose.choices)
+    sequence = models.PositiveSmallIntegerField()
+    contains_sensitive_output = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sequence"]
+        constraints = [
+            models.UniqueConstraint(fields=["profile", "key"], name="unique_profile_command_key"),
+            models.UniqueConstraint(fields=["profile", "sequence"], name="unique_profile_command_sequence"),
+        ]
+
+    def clean(self):
+        if self.profile_id and self.profile.tenant_id != self.tenant_id:
+            raise ValidationError("Command and profile must belong to the same tenant.")
 
 
 class ScopeGrant(models.Model):
