@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from netmiko import ConnectHandler
-from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
+from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException, ReadTimeout
 
 from apps.auditlog.models import AuditEvent
 from apps.evidence.vault import LocalEncryptedObjectStore, VaultError
@@ -78,7 +78,8 @@ def probe_ssh_host_key(host, port, timeout=10):
 class NetmikoSession:
     def __init__(self, *, device, credential, verified_host_key=None, timeout=10):
         nxos = device.platform.upper().replace(" ", "-") in {"NXOS", "NX-OS"}
-        device_type = ("cisco_nxos_telnet" if device.transport == Device.Transport.TELNET else "cisco_nxos") if nxos else ("cisco_ios_telnet" if device.transport == Device.Transport.TELNET else "cisco_ios")
+        self._telnet = device.transport == Device.Transport.TELNET
+        device_type = ("cisco_nxos_telnet" if self._telnet else "cisco_nxos") if nxos else ("cisco_ios_telnet" if self._telnet else "cisco_ios")
         arguments = {
             "device_type": device_type, "host": str(device.management_address), "port": device.ssh_port,
             "username": credential["username"], "password": credential["password"],
@@ -102,6 +103,8 @@ class NetmikoSession:
             self.close(); raise CollectorExecutionError("CONNECTION_TIMEOUT_OR_UNREACHABLE") from exc
 
     def send(self, command, timeout):
+        if self._telnet:
+            return self.connection.send_command_timing(command, read_timeout=max(45, timeout), last_read=3, strip_prompt=True, strip_command=True)
         return self.connection.send_command(command, read_timeout=timeout, strip_prompt=True, strip_command=True)
 
     def close(self):
@@ -174,7 +177,7 @@ def _execute_command(*, job, command, session, deadline, remaining_bytes, eviden
             execution.state = CommandExecution.State.SUCCEEDED
             _store_output(job=job, execution=execution, output=output, evidence_store=evidence_store)
         return execution, execution.output_size_bytes, output
-    except NetmikoTimeoutException:
+    except (NetmikoTimeoutException, ReadTimeout):
         execution.state, execution.reason = CommandExecution.State.TIMEOUT, "COMMAND_TIMEOUT"
         return execution, 0, ""
     except (OSError, VaultError):

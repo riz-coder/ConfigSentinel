@@ -13,7 +13,7 @@ from .models import CollectionJob
 def dispatch_local_job(*, job, actor):
     job = CollectionJob.objects.select_related("tenant").get(pk=job.pk)
     if job.state != CollectionJob.State.QUEUED:
-        raise ValidationError("Only a queued collection job can be started.")
+        return job
     command = [sys.executable, str(settings.BASE_DIR / "manage.py"), "run_collector_agent", "--job", str(job.id)]
     options = {
         "cwd": str(settings.BASE_DIR),

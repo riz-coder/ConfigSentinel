@@ -81,6 +81,9 @@ def collector_center(request):
                 job = CollectionJob.objects.get(tenant=tenant, pk=request.POST["job_id"])
                 if not can_manage:
                     raise PermissionDenied("Tenant owner or compliance lead authorization is required.")
+                if job.state != CollectionJob.State.QUEUED:
+                    messages.info(request, f"Scan is already {job.get_state_display().lower()}; no duplicate worker was started.")
+                    return redirect("collector-center")
                 dispatch_local_job(job=job, actor=request.user)
                 messages.success(request, "Scan started in the background. Refresh shortly for progress and the report.")
             elif operation == "approve_profile":

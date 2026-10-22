@@ -75,6 +75,14 @@ class CollectorBoundaryTests(TestCase):
         self.assertIs(options["stdin"], __import__("subprocess").DEVNULL)
         self.assertTrue(AuditEvent.objects.filter(action="collector.job_dispatched", object_id=str(job.id)).exists())
 
+    @patch("apps.collector.dispatcher.subprocess.Popen")
+    def test_repeat_dispatch_is_idempotent(self, popen):
+        job = self.request_job()
+        job.state = CollectionJob.State.PREFLIGHT
+        job.save(update_fields=["state"])
+        dispatch_local_job(job=job, actor=self.owner)
+        popen.assert_not_called()
+
     def test_host_key_mismatch_fails_closed(self):
         with self.assertRaisesMessage(ValidationError, "Host-key verification failed"):
             self.request_job(observed_host_key_sha256="SHA256:wrong")
