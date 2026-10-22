@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Network assurance setup · {{ product_name }}{% endblock %}
 {% block content %}
+<style>.scan-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:scan-spin .7s linear infinite;vertical-align:-2px;margin-right:7px}@keyframes scan-spin{to{transform:rotate(360deg)}}.scan-run-button[disabled]{cursor:wait;opacity:.82}</style>
 <h1>Network assurance collector</h1>
 <p>Authorize and run read-only Cisco configuration, security and topology collection through the separate background worker.</p>
 {% for message in messages %}<div class="{% if message.tags == 'error' %}warning{% else %}card{% endif %}" style="margin-bottom:14px">{{ message }}</div>{% endfor %}
@@ -18,7 +19,7 @@
 <div class="card" style="margin-top:16px"><h2>Command profiles and exact collection plan</h2>{% for profile in profiles %}<details style="margin-bottom:12px"><summary><strong>{{ profile.name }} v{{ profile.version }}</strong> · {{ profile.status }} · {{ profile.command_count }} commands</summary><p><code>{{ profile.manifest_sha256 }}</code></p>{% if profile.approval_reference %}<p>Signoff: {{ profile.approval_reference }}</p>{% endif %}{% if can_manage and profile.status == "DRAFT" %}<form method="post">{% csrf_token %}<input type="hidden" name="operation" value="approve_profile"><input type="hidden" name="profile_id" value="{{ profile.id }}"><input name="approval_reference" placeholder="Network-engineering/code-review signoff reference" required><button>Independently approve exact manifest</button></form>{% endif %}<table><thead><tr><th>#</th><th>Purpose</th><th>Exact read-only command</th><th>Handling</th></tr></thead><tbody>{% for command in profile.commands.all %}<tr><td>{{ command.sequence }}</td><td>{{ command.get_purpose_display }}</td><td><code>{{ command.command_text }}</code></td><td>{% if command.contains_sensitive_output %}Encrypt + redact{% else %}Standard encrypted evidence{% endif %}</td></tr>{% endfor %}</tbody></table></details>{% empty %}<p>No command profile installed.</p>{% endfor %}</div>
 <div class="grid" style="margin-top:16px"><div class="card"><h2>Topology intent</h2><p>CDP and LLDP neighbor evidence will create candidate L2 links. Links remain unverified until both endpoints or an operator confirms them; management IPs and raw output stay protected.</p></div><div class="card"><h2>Assessment boundary</h2><p>Device facts can support technical PASS/FAIL/WARNING/UNKNOWN results only. Clause mappings remain SOURCE_PENDING until the official source and human legal mapping are approved.</p></div></div>
 <div class="card" style="margin-top:16px"><h2>Authorization scopes</h2><table><tr><th>Device</th><th>Agent</th><th>Authorization</th><th>Status / action</th></tr>{% for item in scope_grants %}<tr><td>{{ item.device.name }}</td><td>{{ item.agent.name }}</td><td>{{ item.authorization_reference }}</td><td>{{ item.status }}{% if can_manage and item.status == "DRAFT" %}<form method="post">{% csrf_token %}<input type="hidden" name="operation" value="approve_scope"><input type="hidden" name="scope_id" value="{{ item.id }}"><button>Independently approve</button></form>{% elif can_manage and item.status == "APPROVED" %}<form method="post">{% csrf_token %}<input type="hidden" name="operation" value="queue_collection"><input type="hidden" name="scope_id" value="{{ item.id }}"><button>Queue read-only collection</button></form>{% endif %}</td></tr>{% empty %}<tr><td colspan="4">No written scope grant recorded. Collection stays blocked.</td></tr>{% endfor %}</table></div>
-<div class="card" style="margin-top:16px"><h2>Collection jobs</h2><table><tr><th>Device</th><th>State</th><th>Discovered platform</th><th>Assessment</th><th>Action</th><th>Created</th></tr>{% for item in jobs %}<tr><td>{{ item.device.name }}</td><td>{{ item.state }}</td><td>{{ item.discovered_model|default:"Pending" }} {{ item.discovered_platform }} {{ item.discovered_release }}</td><td>{% if item.assessment %}<a href="{% url 'device-assessment-report' item.assessment.id %}">{{ item.assessment.result }} report</a>{% else %}{{ item.technical_result }}{% endif %}{% if item.failure_reason %}<br>{{ item.failure_reason }}{% endif %}</td><td>{% if can_manage and item.state == "QUEUED" %}<form method="post">{% csrf_token %}<input type="hidden" name="operation" value="run_job"><input type="hidden" name="job_id" value="{{ item.id }}"><button>Run scan</button></form>{% else %}Background worker{% endif %}</td><td>{{ item.created_at }}</td></tr>{% empty %}<tr><td colspan="6">No jobs queued.</td></tr>{% endfor %}</table><p>Queued scans run as a separate background worker; no terminal command is required.</p></div>
+<div class="card" style="margin-top:16px"><h2>Collection jobs</h2><table><tr><th>Device</th><th>State</th><th>Discovered platform</th><th>Assessment</th><th>Action</th><th>Created</th></tr>{% for item in jobs %}<tr><td>{{ item.device.name }}</td><td>{{ item.state }}</td><td>{{ item.discovered_model|default:"Pending" }} {{ item.discovered_platform }} {{ item.discovered_release }}</td><td>{% if item.assessment %}<a href="{% url 'device-assessment-report' item.assessment.id %}">{{ item.assessment.result }} report</a>{% else %}{{ item.technical_result }}{% endif %}{% if item.failure_reason %}<br>{{ item.failure_reason }}{% endif %}</td><td>{% if can_manage and item.state == "QUEUED" %}<form method="post" class="scan-run-form">{% csrf_token %}<input type="hidden" name="operation" value="run_job"><input type="hidden" name="job_id" value="{{ item.id }}"><button class="scan-run-button">Run scan</button></form>{% else %}Background worker{% endif %}</td><td>{{ item.created_at }}</td></tr>{% empty %}<tr><td colspan="6">No jobs queued.</td></tr>{% endfor %}</table><p>Queued scans run as a separate background worker; no terminal command is required.</p></div>
 <script>
 (() => {
   const transport = document.getElementById("device-transport");
@@ -37,5 +38,16 @@
   transport.addEventListener("change", syncTransport);
   syncTransport();
 })();
+</script>
+<script>
+document.querySelectorAll(".scan-run-form").forEach((form) => {
+  form.addEventListener("submit", () => {
+    const button = form.querySelector(".scan-run-button");
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.innerHTML = '<span class="scan-spinner" aria-hidden="true"></span>Starting…';
+  });
+});
 </script>
 {% endblock %}

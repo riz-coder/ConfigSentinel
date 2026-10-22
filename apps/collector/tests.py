@@ -137,6 +137,8 @@ class CollectorBoundaryTests(TestCase):
         response = self.api_client(self.owner).get("/collector/", HTTP_X_TENANT_ID=str(self.tenant.id))
         self.assertContains(response, "Network assurance collector")
         self.assertContains(response, "separate background worker")
+        self.assertContains(response, "scan-run-form")
+        self.assertContains(response, "Starting…")
         self.assertContains(response, "Automatic device-aware assessment flow")
         self.assertNotContains(response, "Install Cisco IOS/IOS-XE draft profile")
         self.assertNotContains(response, self.credential.secret_reference)
@@ -234,7 +236,7 @@ class CollectorAgentExecutionTests(TestCase):
             stored_bytes = next(Path(directory).rglob("*.json")).read_bytes()
             self.assertNotIn(b"readonly", stored_bytes); self.assertNotIn(b"synthetic-password", stored_bytes)
             self.assertEqual(store.retrieve(self.credential.secret_reference)["username"], "readonly")
-            path = next(Path(directory).rglob("*.json")); data = bytearray(path.read_bytes()); data[-4] = ord("A") if data[-4] != ord("A") else ord("B"); path.write_bytes(data)
+            path = next(Path(directory).rglob("*.json")); payload = json.loads(path.read_text(encoding="utf-8")); payload["ciphertext"] = ("A" if payload["ciphertext"][0] != "A" else "B") + payload["ciphertext"][1:]; path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(CollectorSecretError):
                 store.retrieve(self.credential.secret_reference)
 
