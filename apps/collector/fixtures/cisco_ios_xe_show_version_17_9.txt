@@ -1,0 +1,5 @@
+Cisco IOS XE Software, Version 17.09.04a
+Cisco IOS Software [Cupertino], Catalyst L3 Switch Software (CAT9K_IOSXE), Version 17.9.4a, RELEASE SOFTWARE (fc3)
+Technical Support: https://www.example.invalid/support
+Model Number                       : C9300-24T
+cisco C9300-24T (X86) processor with 1417927K/6147K bytes of memory.

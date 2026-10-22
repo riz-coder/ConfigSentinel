@@ -1,4 +1,32 @@
-# Read-only collector foundation operations
+# Read-only collector operations
+
+## WP-NET-02 local/on-prem execution slice
+
+The application can now execute one authorized job from the customer-side host
+with `python manage.py run_collector_agent --agent AGENT_UUID`. It performs SSH
+host-key verification before authentication, discovers the Cisco platform with
+the approved `show version` command, then executes only the exact commands in
+the independently approved profile. There is no arbitrary command input or
+SSH-to-Telnet fallback.
+
+Raw credentials remain outside the database. Configure a distinct 32-byte
+base64 `CONFIGSENTINEL_COLLECTOR_SECRET_KEY`, then enter a password without
+terminal echo:
+
+```powershell
+python manage.py collector_store_credential --credential CREDENTIAL_REFERENCE_UUID --username READ_ONLY_USER
+```
+
+The command output is encrypted locally using authenticated encryption. Each
+device output is stored as a separate encrypted, hashed snapshot. Output size,
+runtime and command count are bounded by the approved scope grant. Unsupported,
+denied, timed-out and truncated commands remain explicit; they never become a
+technical PASS or a legal compliance conclusion.
+
+This package is suitable for controlled local development and lab validation.
+Production still requires a separately packaged outbound-only agent, mTLS and
+signed/replay-resistant job claims, a production secrets manager, distributed
+locks and testing on the exact supported firmware.
 
 ## WP-NET-01 collection-plan capability
 
@@ -27,14 +55,13 @@ downgrade exists.
    validity window and conservative command/time/output budgets.
 5. A different authorized operator approves the scope.
 
-## Current safety stop
+## WP-NET-01 foundation retained
 
-The reviewed Cisco command plan is bundled, but no networking library or live
-socket is invoked. Profile approval means only that its exact allowlist and
-manifest passed two-person review with a recorded network-engineering/code-review
-signoff reference. It is not permission to run from the Django
-server. Signed agent enrollment, agent job claim, production vault resolution,
-encrypted output ingestion and real-firmware parser fixtures remain required.
+Profile approval means only that its exact allowlist and manifest passed
+two-person review with a recorded network-engineering/code-review signoff
+reference. It is not a compliance approval. Live execution is deliberately
+available only through the local collector management command, not a web
+request.
 
 Use `/collector/` for the setup/readiness view and `/api/v1/openapi/` for API
 contracts. Collection jobs always begin with technical result `UNKNOWN`; no

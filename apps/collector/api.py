@@ -7,9 +7,9 @@ from apps.auditlog.models import AuditEvent
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
-from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
-from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceSerializer, ScopeGrantSerializer
-from .services import approve_command_profile, approve_scope, approve_telnet_device, request_collection
+from .models import CollectionJob, CollectorAgent, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
+from .serializers import CollectionJobSerializer, CollectionRequestSerializer, CollectorAgentSerializer, CommandExecutionSerializer, CommandProfileSerializer, CredentialReferenceSerializer, DeviceSerializer, RawSnapshotSerializer, ScopeGrantSerializer
+from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, request_collection
 
 
 class TenantCollectorViewSet:
@@ -81,6 +81,16 @@ class CollectorAgentViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixin
     def perform_create(self, serializer):
         self.save_new(serializer, "registered_by")
 
+    @action(detail=True, methods=["post"])
+    def activate(self, request, pk=None):
+        try:
+            agent = activate_agent(agent=self.get_object(), actor=request.user)
+        except DjangoPermissionDenied as exc:
+            self.permission_denied(request, message=str(exc))
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return Response(self.get_serializer(agent).data)
+
 
 class CommandProfileViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = CommandProfileSerializer
@@ -150,3 +160,17 @@ class CollectionJobViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins
             AuditEvent.objects.create(tenant=tenant, actor=request.user, action="collector.job_denied", object_type="CollectionJob", object_id="not_created", metadata={"reason": "safety_validation_failed"})
             raise serializers.ValidationError(exc.messages)
         return Response(self.get_serializer(job).data, status=status.HTTP_201_CREATED)
+
+
+class CommandExecutionViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = CommandExecutionSerializer
+
+    def get_queryset(self):
+        return CommandExecution.objects.filter(tenant=self.tenant()).select_related("job", "command")
+
+
+class RawSnapshotViewSet(TenantCollectorViewSet, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    serializer_class = RawSnapshotSerializer
+
+    def get_queryset(self):
+        return RawSnapshot.objects.filter(tenant=self.tenant()).select_related("execution")

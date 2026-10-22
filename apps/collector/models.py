@@ -94,10 +94,17 @@ class CollectorAgent(models.Model):
     identity_fingerprint = models.CharField(max_length=95)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    activated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="activated_collector_agents")
+    activated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["tenant", "identity_fingerprint"], name="unique_tenant_agent_identity")]
+
+    def clean(self):
+        value = self.identity_fingerprint.strip()
+        if not value.startswith("SHA256:") or len(value) < 20:
+            raise ValidationError({"identity_fingerprint": "A SHA256 agent identity fingerprint is required."})
 
 
 class CommandProfile(models.Model):
@@ -193,9 +200,13 @@ class ScopeGrant(models.Model):
 class CollectionJob(models.Model):
     class State(models.TextChoices):
         QUEUED = "QUEUED", "Queued"
-        CLAIMED = "CLAIMED", "Claimed"
-        RUNNING = "RUNNING", "Running"
-        SUCCEEDED = "SUCCEEDED", "Collection received"
+        PREFLIGHT = "PREFLIGHT", "Preflight"
+        CAPABILITY_PROBE = "CAPABILITY_PROBE", "Capability probe"
+        COLLECTING = "COLLECTING", "Collecting"
+        PARSING = "PARSING", "Parsing"
+        ASSESSING = "ASSESSING", "Assessing"
+        COMPLETE = "COMPLETE", "Complete"
+        PARTIAL = "PARTIAL", "Partial"
         FAILED = "FAILED", "Failed"
         TIMED_OUT = "TIMED_OUT", "Timed out"
         CANCELLED = "CANCELLED", "Cancelled"
@@ -219,10 +230,65 @@ class CollectionJob(models.Model):
     failure_reason = models.CharField(max_length=255, blank=True)
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    collector_version = models.CharField(max_length=40, blank=True)
+    discovered_vendor = models.CharField(max_length=20, blank=True)
+    discovered_platform = models.CharField(max_length=80, blank=True)
+    discovered_model = models.CharField(max_length=120, blank=True)
+    discovered_release = models.CharField(max_length=80, blank=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["device"], condition=Q(state__in=["QUEUED", "CLAIMED", "RUNNING"]), name="one_active_job_per_device"),
+            models.UniqueConstraint(fields=["device"], condition=Q(state__in=["QUEUED", "PREFLIGHT", "CAPABILITY_PROBE", "COLLECTING", "PARSING", "ASSESSING"]), name="one_active_job_per_device"),
         ]
+
+
+class CommandExecution(models.Model):
+    class State(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        SUCCEEDED = "SUCCEEDED", "Succeeded"
+        UNSUPPORTED = "UNSUPPORTED", "Unsupported"
+        DENIED = "DENIED", "Denied"
+        TIMEOUT = "TIMEOUT", "Timeout"
+        TRUNCATED = "TRUNCATED", "Truncated"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="command_executions")
+    job = models.ForeignKey(CollectionJob, on_delete=models.PROTECT, related_name="command_executions")
+    command = models.ForeignKey(CommandDefinition, on_delete=models.PROTECT, related_name="executions")
+    state = models.CharField(max_length=16, choices=State.choices, default=State.PLANNED)
+    reason = models.CharField(max_length=255, blank=True)
+    output_size_bytes = models.PositiveIntegerField(default=0)
+    output_sha256 = models.CharField(max_length=64, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["command__sequence"]
+        constraints = [models.UniqueConstraint(fields=["job", "command"], name="unique_job_command_execution")]
+
+    def clean(self):
+        if self.job_id and self.command_id and (self.job.tenant_id != self.tenant_id or self.command.tenant_id != self.tenant_id or self.command.profile_id != self.job.command_profile_id):
+            raise ValidationError("Command execution must match the job tenant and approved profile.")
+
+
+class RawSnapshot(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT, related_name="raw_snapshots")
+    execution = models.OneToOneField(CommandExecution, on_delete=models.PROTECT, related_name="snapshot")
+    storage_key = models.CharField(max_length=255)
+    wrapped_dek = models.TextField()
+    wrap_nonce = models.CharField(max_length=64)
+    content_nonce = models.CharField(max_length=64)
+    plaintext_sha256 = models.CharField(max_length=64)
+    ciphertext_sha256 = models.CharField(max_length=64)
+    size_bytes = models.PositiveIntegerField()
+    collected_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.execution_id and self.execution.tenant_id != self.tenant_id:
+            raise ValidationError("Snapshot and command execution must belong to the same tenant.")
 

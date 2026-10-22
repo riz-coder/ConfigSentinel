@@ -2,13 +2,15 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import redirect, render
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.inventory.models import Asset
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, ScopeGrant
-from .services import approve_command_profile, approve_telnet_device, register_credential_reference, register_device
+from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, register_agent, register_credential_reference, register_device, request_collection
 
 
 @login_required
@@ -33,6 +35,35 @@ def collector_center(request):
             elif operation == "credential":
                 register_credential_reference(tenant=tenant, actor=request.user, name=request.POST["name"].strip(), provider=request.POST["provider"].strip(), secret_reference=request.POST["secret_reference"].strip())
                 messages.success(request, "Opaque credential reference saved; no raw credential was stored.")
+            elif operation == "agent":
+                register_agent(tenant=tenant, actor=request.user, name=request.POST["name"].strip(), identity_fingerprint=request.POST["identity_fingerprint"].strip())
+                messages.success(request, "Collector agent registered pending independent activation.")
+            elif operation == "activate_agent":
+                agent = CollectorAgent.objects.get(tenant=tenant, pk=request.POST["agent_id"])
+                activate_agent(agent=agent, actor=request.user)
+                messages.success(request, "Collector agent activated.")
+            elif operation == "scope":
+                device = Device.objects.get(tenant=tenant, pk=request.POST["device_id"])
+                agent = CollectorAgent.objects.get(tenant=tenant, pk=request.POST["agent_id"])
+                credential = CredentialReference.objects.get(tenant=tenant, pk=request.POST["credential_id"])
+                valid_from, valid_until = parse_datetime(request.POST["valid_from"]), parse_datetime(request.POST["valid_until"])
+                if valid_from is None or valid_until is None:
+                    raise ValidationError("Authorization dates are invalid.")
+                if timezone.is_naive(valid_from): valid_from = timezone.make_aware(valid_from)
+                if timezone.is_naive(valid_until): valid_until = timezone.make_aware(valid_until)
+                create_scope_grant(tenant=tenant, actor=request.user, device=device, agent=agent, credential=credential, authorization_reference=request.POST["authorization_reference"].strip(), purpose=request.POST["purpose"].strip(), valid_from=valid_from, valid_until=valid_until, max_commands=int(request.POST["max_commands"]), max_runtime_seconds=int(request.POST["max_runtime_seconds"]), max_output_bytes=int(request.POST["max_output_bytes"]))
+                messages.success(request, "Collection scope recorded pending independent approval.")
+            elif operation == "approve_scope":
+                grant = ScopeGrant.objects.get(tenant=tenant, pk=request.POST["scope_id"])
+                approve_scope(grant=grant, actor=request.user)
+                messages.success(request, "Collection scope independently approved.")
+            elif operation == "queue_collection":
+                grant = ScopeGrant.objects.select_related("device", "agent").get(tenant=tenant, pk=request.POST["scope_id"])
+                profile = CommandProfile.objects.filter(tenant=tenant, vendor=grant.device.vendor, status=CommandProfile.Status.APPROVED).first()
+                if profile is None:
+                    raise ValidationError("No independently approved command profile supports this device yet.")
+                request_collection(tenant=tenant, actor=request.user, device=grant.device, agent=grant.agent, scope_grant=grant, command_profile=profile, observed_host_key_sha256=grant.device.pinned_host_key_sha256)
+                messages.success(request, "Collection job queued for the on-prem agent.")
             elif operation == "approve_profile":
                 profile = CommandProfile.objects.get(tenant=tenant, pk=request.POST["profile_id"])
                 approve_command_profile(profile=profile, actor=request.user, approval_reference=request.POST.get("approval_reference"))
@@ -44,7 +75,7 @@ def collector_center(request):
             else:
                 raise ValidationError("Unknown collector operation.")
             return redirect("collector-center")
-        except (ValidationError, PermissionDenied, Asset.DoesNotExist, Device.DoesNotExist, CommandProfile.DoesNotExist, KeyError, ValueError) as exc:
+        except (ValidationError, PermissionDenied, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, KeyError, ValueError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "collector/center.html", {
         "tenant": tenant,

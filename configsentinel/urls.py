@@ -18,7 +18,7 @@ from apps.regulatory.api import (
 from apps.regulatory.views import audit_report, auditor_report_download, auditor_room, corrective_action_center, dashboard, mapping_center, regulatory_center
 from apps.evidence.api import EvidenceArtifactViewSet
 from apps.evidence.views import evidence_center, evidence_download
-from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceViewSet, ScopeGrantViewSet
+from apps.collector.api import CollectionJobViewSet, CollectorAgentViewSet, CommandExecutionViewSet, CommandProfileViewSet, CredentialReferenceViewSet, DeviceViewSet, RawSnapshotViewSet, ScopeGrantViewSet
 from apps.collector.views import collector_center
 from apps.security.views import MFASetupView, MFAVerifyView
 from apps.inventory.api import AssetDependencyViewSet, AssetViewSet, CriticalServiceViewSet, SiteViewSet
@@ -51,6 +51,8 @@ router.register("collector-agents", CollectorAgentViewSet, basename="collector-a
 router.register("command-profiles", CommandProfileViewSet, basename="command-profile")
 router.register("scope-grants", ScopeGrantViewSet, basename="scope-grant")
 router.register("collection-jobs", CollectionJobViewSet, basename="collection-job")
+router.register("command-executions", CommandExecutionViewSet, basename="command-execution")
+router.register("raw-snapshots", RawSnapshotViewSet, basename="raw-snapshot")
 
 urlpatterns = [
     path("health/", lambda request: JsonResponse({"status": "ok"}), name="health"),

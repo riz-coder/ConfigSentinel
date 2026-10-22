@@ -2,6 +2,53 @@
 
 ## Current work package
 
+`WP-NET-02` — local/on-prem outbound collector execution slice.
+
+### Current bounded change: safe Cisco IOS/IOS-XE live collection
+
+- Add an agent-local encrypted secret store populated through a no-echo CLI;
+  raw usernames/passwords never enter Django forms, API responses, logs or Git.
+- Execute only an independently approved exact command manifest over SSH or an
+  explicitly approved Telnet exception; never accept free-form commands or
+  silently downgrade transport.
+- Perform SSH host-key preflight, deterministic `show version` platform/model/
+  release discovery, per-device locking and command/runtime/output budgets.
+- Record per-command states and hash-addressed encrypted raw snapshots without
+  rendering full configuration in the UI.
+- Fail unsupported, denied, timed-out, truncated or unparseable collection as
+  `UNKNOWN`/`ERROR`; do not emit technical PASS or legal compliance states.
+
+Acceptance tests: secret-store authentication/tamper failure, no secret output,
+host-key mismatch, Telnet approval, exact allowlist enforcement, platform
+mismatch, timeout/output budgets, encrypted snapshot lineage, state transitions,
+tenant isolation, UI/API contracts and mocked transport execution. No test may
+connect to a real or private network endpoint.
+
+Security threats: credential exfiltration, command injection, malicious device
+output, host spoofing, clear-text Telnet, runaway output, concurrent scans,
+cross-tenant job claims and sensitive configuration leakage. Cryptography,
+commands and real-device enablement require explicit operator/code review.
+
+Known boundary: this slice runs as a separate local/on-prem management-command
+agent against the same deployment database. Remote signed/mTLS job delivery,
+Celery/Redis scheduling, production secrets manager and real-firmware lab
+certification remain required before commercial deployment.
+
+Implementation status: complete for the bounded local-agent slice. Device
+registration installs the reviewed Cisco candidate manifest, while execution
+still requires independent profile, agent and scope approval. The collector
+resolves an encrypted local credential, pins the SSH host key, validates the
+actual IOS/IOS-XE identity, enforces approved budgets, runs only manifest
+commands, and stores one encrypted/hash-linked snapshot per successful command.
+Command and snapshot metadata are tenant-scoped through API/RLS and immutable
+after terminal capture. Targeted collector tests passed 18/18; the full local
+SQLite suite passed 116 tests with 6 PostgreSQL-only tests skipped. No real
+device was contacted, so actual supported firmware remains an operator/lab
+signoff blocker. No parser verdict, topology graph, device technical PASS or
+legal compliance decision is produced by this package.
+
+### Previous work package
+
 `WP-NET-01` — reviewed Cisco collection-plan foundation.
 
 ### Current bounded change: safe device assessment planning

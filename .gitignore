@@ -11,6 +11,7 @@ htmlcov/
 staticfiles/
 media/
 evidence_objects/
+.collector_secrets/
 .idea/
 .vscode/
 ~$*.docx

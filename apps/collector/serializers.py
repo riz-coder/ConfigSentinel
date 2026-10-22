@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandProfile, CredentialReference, Device, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, RawSnapshot, ScopeGrant
 
 
 class DeviceSerializer(serializers.ModelSerializer):
@@ -23,7 +23,7 @@ class CollectorAgentSerializer(serializers.ModelSerializer):
     class Meta:
         model = CollectorAgent
         exclude = ["tenant", "registered_by"]
-        read_only_fields = ["id", "status", "created_at"]
+        read_only_fields = ["id", "status", "activated_by", "activated_at", "created_at"]
 
 
 class CommandDefinitionSerializer(serializers.ModelSerializer):
@@ -53,7 +53,7 @@ class CollectionJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = CollectionJob
         exclude = ["tenant", "requested_by"]
-        read_only_fields = ["id", "max_commands", "max_runtime_seconds", "max_output_bytes", "state", "technical_result", "failure_reason", "created_at", "finished_at"]
+        read_only_fields = ["id", "max_commands", "max_runtime_seconds", "max_output_bytes", "state", "technical_result", "failure_reason", "created_at", "claimed_at", "started_at", "finished_at", "collector_version", "discovered_vendor", "discovered_platform", "discovered_model", "discovered_release"]
 
 
 class CollectionRequestSerializer(serializers.Serializer):
@@ -62,3 +62,20 @@ class CollectionRequestSerializer(serializers.Serializer):
     scope_grant = serializers.UUIDField()
     command_profile = serializers.UUIDField()
     observed_host_key_sha256 = serializers.CharField(max_length=95)
+
+
+class CommandExecutionSerializer(serializers.ModelSerializer):
+    command_key = serializers.CharField(source="command.key", read_only=True)
+    command_purpose = serializers.CharField(source="command.purpose", read_only=True)
+
+    class Meta:
+        model = CommandExecution
+        exclude = ["tenant"]
+        read_only_fields = [field.name for field in CommandExecution._meta.fields if field.name != "tenant"] + ["command_key", "command_purpose"]
+
+
+class RawSnapshotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RawSnapshot
+        fields = ["id", "execution", "plaintext_sha256", "ciphertext_sha256", "size_bytes", "collected_at"]
+        read_only_fields = fields

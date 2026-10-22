@@ -58,6 +58,26 @@ and collector links; administrator access; tenant-to-tenant boundary.
 
 - Cross-tenant target substitution is blocked in service validation and forced
   PostgreSQL RLS across every collector table.
+
+## WP-NET-02 collector execution threats
+
+- Credential disclosure: the control-plane database stores only opaque
+  references; the local agent encrypts secrets with a dedicated key and never
+  prints passwords.
+- Machine-in-the-middle and device substitution: SSH requires an independently
+  pinned SHA256 host key and fails closed on mismatch. Telnet remains an
+  explicitly approved legacy exception and never receives an automatic
+  downgrade.
+- Command injection and device modification: jobs contain no free-form command;
+  only an exact, versioned, independently approved read-only allowlist runs.
+- Runaway or hostile output: per-scope command count, runtime and output-byte
+  budgets are enforced, and each device has only one active job.
+- Evidence tampering and tenant crossover: each command output becomes an
+  authenticated-encryption snapshot with plaintext/ciphertext hashes, tenant
+  ownership and append-only/RLS database controls.
+- Unknown platform or command behavior: discovery mismatch, unsupported,
+  denied, stale, truncated and failed results remain explicit UNKNOWN/ERROR
+  outcomes and cannot be promoted to PASS.
 - Host spoofing fails closed unless the observed SSH fingerprint exactly matches
   the out-of-band pinned fingerprint.
 - Raw credentials are excluded by design: only write-only opaque vault references

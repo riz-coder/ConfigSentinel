@@ -62,6 +62,8 @@ def register_device(*, tenant, actor, asset, name, vendor, platform, management_
     )
     device.full_clean(); device.save()
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.device_created", object_type="Device", object_id=str(device.id), metadata={"transport": device.transport, "asset_id": str(asset.id) if asset else None})
+    if device.vendor == Device.Vendor.CISCO and device.platform.upper().replace(" ", "-") in {"IOS", "IOS-XE", "IOS_IOS_XE"}:
+        install_cisco_ios_xe_profile(tenant=tenant, actor=actor)
     return device
 
 
@@ -72,6 +74,38 @@ def register_credential_reference(*, tenant, actor, name, provider, secret_refer
     reference.full_clean(); reference.save()
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.credentialreference_created", object_type="CredentialReference", object_id=str(reference.id), metadata={"provider": provider})
     return reference
+
+
+@transaction.atomic
+def register_agent(*, tenant, actor, name, identity_fingerprint):
+    _operator(actor, tenant)
+    if not identity_fingerprint.startswith("SHA256:") or len(identity_fingerprint) < 20:
+        raise ValidationError("A SHA256 agent identity fingerprint is required.")
+    agent = CollectorAgent(tenant=tenant, name=name, identity_fingerprint=identity_fingerprint, registered_by=actor)
+    agent.full_clean(); agent.save()
+    AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.agent_registered", object_type="CollectorAgent", object_id=str(agent.id), metadata={})
+    return agent
+
+
+@transaction.atomic
+def activate_agent(*, agent, actor):
+    _operator(actor, agent.tenant)
+    agent = CollectorAgent.objects.select_for_update().get(pk=agent.pk)
+    if agent.status != CollectorAgent.Status.PENDING or agent.registered_by_id == actor.pk:
+        raise ValidationError("Agent activation requires a different authorized reviewer and a pending agent.")
+    agent.status = CollectorAgent.Status.ACTIVE; agent.activated_by = actor; agent.activated_at = timezone.now()
+    agent.save(update_fields=["status", "activated_by", "activated_at"])
+    AuditEvent.objects.create(tenant=agent.tenant, actor=actor, action="collector.agent_activated", object_type="CollectorAgent", object_id=str(agent.id), metadata={})
+    return agent
+
+
+@transaction.atomic
+def create_scope_grant(*, tenant, actor, device, agent, credential, authorization_reference, purpose, valid_from, valid_until, max_commands, max_runtime_seconds, max_output_bytes):
+    _operator(actor, tenant)
+    grant = ScopeGrant(tenant=tenant, device=device, agent=agent, credential=credential, authorization_reference=authorization_reference, purpose=purpose, valid_from=valid_from, valid_until=valid_until, max_commands=max_commands, max_runtime_seconds=max_runtime_seconds, max_output_bytes=max_output_bytes, requested_by=actor)
+    grant.full_clean(); grant.save()
+    AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.scope_requested", object_type="ScopeGrant", object_id=str(grant.id), metadata={"authorization_reference": authorization_reference})
+    return grant
 
 
 @transaction.atomic
