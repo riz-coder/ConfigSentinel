@@ -2,6 +2,17 @@
 
 ## Current work package
 
+`WP-NET-05` — application-dispatched local collector jobs.
+
+- Let an authorized operator dispatch a queued job from the UI without exposing
+  a terminal command or blocking the Django request on network I/O.
+- Launch the existing fixed management-command worker as a detached subprocess
+  with `shell=False`, an exact job UUID and no user-controlled command text.
+- Retain all agent/scope/profile/device gates inside the worker and audit the
+  dispatch. Production remote-agent scheduling remains a later mTLS/queue WP.
+
+### Previous work package
+
 `WP-NET-04` — Cisco NX-OS collection-profile foundation.
 
 - Add a separate integrity-hashed Nexus NX-OS read-only command manifest,

@@ -2,8 +2,8 @@
 
 ## WP-NET-02 local/on-prem execution slice
 
-The application can now execute one authorized job from the customer-side host
-with `python manage.py run_collector_agent --agent AGENT_UUID`. It performs SSH
+The application can now dispatch an authorized job from the Collector Setup UI
+to a detached local worker. The worker performs SSH
 host-key verification before authentication, discovers the Cisco platform with
 the approved `show version` command, then executes only the exact commands in
 the independently approved profile. There is no arbitrary command input or
@@ -27,6 +27,11 @@ This package is suitable for controlled local development and lab validation.
 Production still requires a separately packaged outbound-only agent, mTLS and
 signed/replay-resistant job claims, a production secrets manager, distributed
 locks and testing on the exact supported firmware.
+
+The management command remains an operator recovery/diagnostic interface, but
+normal users queue and run scans from the application. The web request launches
+only the fixed worker entry point with an exact job UUID and returns immediately;
+it does not accept command text or keep a network session inside the request.
 
 ## WP-NET-01 collection-plan capability
 

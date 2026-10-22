@@ -10,6 +10,7 @@ from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
+from .dispatcher import dispatch_local_job
 from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, register_agent, register_credential_reference, register_device, request_collection
 
 
@@ -65,8 +66,15 @@ def collector_center(request):
                 profile = next((item for item in candidates if item.platform.upper() == normalized or (item.platform == "IOS_IOS_XE" and normalized in {"IOS", "IOS-XE", "IOS-IOS-XE"}) or (item.platform == "NX-OS" and normalized in {"NXOS", "NX-OS"})), None)
                 if profile is None:
                     raise ValidationError("No independently approved command profile supports this device yet.")
-                request_collection(tenant=tenant, actor=request.user, device=grant.device, agent=grant.agent, scope_grant=grant, command_profile=profile, observed_host_key_sha256=grant.device.pinned_host_key_sha256)
-                messages.success(request, "Collection job queued for the on-prem agent.")
+                job = request_collection(tenant=tenant, actor=request.user, device=grant.device, agent=grant.agent, scope_grant=grant, command_profile=profile, observed_host_key_sha256=grant.device.pinned_host_key_sha256)
+                dispatch_local_job(job=job, actor=request.user)
+                messages.success(request, "Scan started in the background. Refresh shortly for progress and the report.")
+            elif operation == "run_job":
+                job = CollectionJob.objects.get(tenant=tenant, pk=request.POST["job_id"])
+                if not can_manage:
+                    raise PermissionDenied("Tenant owner or compliance lead authorization is required.")
+                dispatch_local_job(job=job, actor=request.user)
+                messages.success(request, "Scan started in the background. Refresh shortly for progress and the report.")
             elif operation == "approve_profile":
                 profile = CommandProfile.objects.get(tenant=tenant, pk=request.POST["profile_id"])
                 approve_command_profile(profile=profile, actor=request.user, approval_reference=request.POST.get("approval_reference"))
@@ -78,7 +86,7 @@ def collector_center(request):
             else:
                 raise ValidationError("Unknown collector operation.")
             return redirect("collector-center")
-        except (ValidationError, PermissionDenied, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, KeyError, ValueError) as exc:
+        except (ValidationError, PermissionDenied, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, CollectionJob.DoesNotExist, KeyError, ValueError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "collector/center.html", {
         "tenant": tenant,

@@ -2,6 +2,7 @@ import base64
 import json
 import secrets
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 from datetime import timedelta
 
@@ -19,6 +20,7 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
+from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
 from .services import CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_profile, register_agent, register_device, request_collection
@@ -61,6 +63,17 @@ class CollectorBoundaryTests(TestCase):
         job = self.request_job()
         self.assertEqual((job.max_commands, job.max_runtime_seconds, job.max_output_bytes), (5, 60, 4096))
         self.assertEqual(job.technical_result, CollectionJob.Result.UNKNOWN)
+
+    @patch("apps.collector.dispatcher.subprocess.Popen")
+    def test_ui_dispatch_uses_fixed_detached_worker_without_shell(self, popen):
+        job = self.request_job()
+        dispatch_local_job(job=job, actor=self.owner)
+        command = popen.call_args.args[0]
+        options = popen.call_args.kwargs
+        self.assertEqual(command[-3:], ["run_collector_agent", "--job", str(job.id)])
+        self.assertFalse(options["shell"])
+        self.assertIs(options["stdin"], __import__("subprocess").DEVNULL)
+        self.assertTrue(AuditEvent.objects.filter(action="collector.job_dispatched", object_id=str(job.id)).exists())
 
     def test_host_key_mismatch_fails_closed(self):
         with self.assertRaisesMessage(ValidationError, "Host-key verification failed"):
@@ -123,7 +136,7 @@ class CollectorBoundaryTests(TestCase):
     def test_ui_explains_input_and_does_not_render_secret(self):
         response = self.api_client(self.owner).get("/collector/", HTTP_X_TENANT_ID=str(self.tenant.id))
         self.assertContains(response, "Network assurance collector")
-        self.assertContains(response, "Live device execution remains blocked")
+        self.assertContains(response, "separate background worker")
         self.assertContains(response, "Automatic device-aware assessment flow")
         self.assertNotContains(response, "Install Cisco IOS/IOS-XE draft profile")
         self.assertNotContains(response, self.credential.secret_reference)

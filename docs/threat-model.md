@@ -92,6 +92,9 @@ and collector links; administrator access; tenant-to-tenant boundary.
 - No transport or command execution occurs in a Django web request. The
   explicitly invoked local agent enforces approvals, budgets and its exact
   allowlist; signed remote-agent delivery and real-firmware validation remain.
+- UI dispatch uses `shell=False` with a fixed Python/management-command argument
+  vector and an exact server-side job UUID. User input cannot become a shell or
+  device command, and device I/O occurs only in the detached worker.
 - Cisco parser/rule manipulation is bounded by authenticated encrypted
   snapshots, deterministic versioned checks and evidence hashes; raw device
   configuration is not rendered in reports.
