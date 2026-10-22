@@ -165,16 +165,20 @@ def approve_command_profile(*, profile, actor, approval_reference):
 
 
 @transaction.atomic
-def approve_telnet_device(*, device, actor):
+def approve_telnet_device(*, device, actor, approval_reference=None):
     _operator(actor, device.tenant)
     device = Device.objects.select_for_update().get(pk=device.pk)
     if device.transport != Device.Transport.TELNET or device.created_by_id == actor.pk:
         raise ValidationError("Telnet approval requires a different authorized reviewer and a Telnet device.")
+    if approval_reference:
+        device.telnet_exception_reference = approval_reference
+    if device.telnet_exception_reference == "PENDING_INDEPENDENT_APPROVAL":
+        raise ValidationError("Enter the authorized Telnet exception/change reference before approval.")
     device.full_clean()
     device.telnet_approved_by = actor
     device.telnet_approved_at = timezone.now()
     device.is_active = True
-    device.save(update_fields=["telnet_approved_by", "telnet_approved_at", "is_active"])
+    device.save(update_fields=["telnet_exception_reference", "telnet_approved_by", "telnet_approved_at", "is_active"])
     AuditEvent.objects.create(tenant=device.tenant, actor=actor, action="collector.telnet_exception_approved", object_type="Device", object_id=str(device.id), metadata={"exception_reference": device.telnet_exception_reference})
     return device
 

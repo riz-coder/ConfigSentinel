@@ -22,14 +22,15 @@ def collector_center(request):
             operation = request.POST.get("operation")
             if operation == "device":
                 asset = Asset.objects.get(tenant=tenant, pk=request.POST["asset"], is_active=True)
+                transport = request.POST["transport"]
                 register_device(
                     tenant=tenant, actor=request.user, asset=asset,
                     name=request.POST["name"].strip(), vendor=request.POST["vendor"],
                     platform=request.POST["platform"].strip(), management_address=request.POST["management_address"].strip(),
-                    transport=request.POST["transport"], port=int(request.POST["port"]),
+                    transport=transport, port=23 if transport == Device.Transport.TELNET else int(request.POST["port"]),
                     pinned_host_key_sha256=request.POST.get("pinned_host_key_sha256", "").strip(),
-                    telnet_exception_reference=request.POST.get("telnet_exception_reference", "").strip(),
-                    telnet_risk_acknowledgement=request.POST.get("telnet_risk_acknowledgement", "").strip(),
+                    telnet_exception_reference="PENDING_INDEPENDENT_APPROVAL" if transport == Device.Transport.TELNET else "",
+                    telnet_risk_acknowledgement="Legacy clear-text transport remains blocked until a separate authorized reviewer records and approves the exception." if transport == Device.Transport.TELNET else "",
                 )
                 messages.success(request, "Device registered. Telnet devices remain disabled until independent exception approval.")
             elif operation == "credential":
@@ -70,7 +71,7 @@ def collector_center(request):
                 messages.success(request, "Command profile independently approved.")
             elif operation == "approve_telnet":
                 device = Device.objects.get(tenant=tenant, pk=request.POST["device_id"])
-                approve_telnet_device(device=device, actor=request.user)
+                approve_telnet_device(device=device, actor=request.user, approval_reference=request.POST.get("approval_reference", "").strip())
                 messages.success(request, "Telnet exception independently approved; no SSH downgrade is permitted.")
             else:
                 raise ValidationError("Unknown collector operation.")
