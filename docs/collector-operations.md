@@ -9,13 +9,12 @@ the approved `show version` command, then executes only the exact commands in
 the independently approved profile. There is no arbitrary command input or
 SSH-to-Telnet fallback.
 
-Raw credentials remain outside the database. Configure a distinct 32-byte
-base64 `CONFIGSENTINEL_COLLECTOR_SECRET_KEY`, then enter a password without
-terminal echo:
-
-```powershell
-python manage.py collector_store_credential --credential CREDENTIAL_REFERENCE_UUID --username READ_ONLY_USER
-```
+Raw credentials remain outside the database. An authorized operator provisions
+them from the Collector Setup screen directly into the local encrypted store.
+The password is write-only: it is not rendered back, logged, audited or sent to
+an external model. If `CONFIGSENTINEL_COLLECTOR_SECRET_KEY` is unset, this local
+deployment generates a protected key file under `.collector_secrets`; production
+deployments must supply the key through their secrets manager.
 
 The command output is encrypted locally using authenticated encryption. Each
 device output is stored as a separate encrypted, hashed snapshot. Output size,

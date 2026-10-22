@@ -10,6 +10,9 @@
   with `shell=False`, an exact job UUID and no user-controlled command text.
 - Retain all agent/scope/profile/device gates inside the worker and audit the
   dispatch. Production remote-agent scheduling remains a later mTLS/queue WP.
+- Provide write-only in-app credential provisioning into the local encrypted
+  agent store; auto-create a protected local key only for this local deployment,
+  while production remains dependent on a managed secret/key service.
 
 ### Previous work package
 

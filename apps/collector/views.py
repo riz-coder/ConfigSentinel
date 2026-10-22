@@ -11,6 +11,7 @@ from apps.tenancy.models import Membership
 
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
 from .dispatcher import dispatch_local_job
+from .secretstore import CollectorSecretError, LocalAgentSecretStore
 from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, register_agent, register_credential_reference, register_device, request_collection
 
 
@@ -37,6 +38,13 @@ def collector_center(request):
             elif operation == "credential":
                 register_credential_reference(tenant=tenant, actor=request.user, name=request.POST["name"].strip(), provider=request.POST["provider"].strip(), secret_reference=request.POST["secret_reference"].strip())
                 messages.success(request, "Opaque credential reference saved; no raw credential was stored.")
+            elif operation == "provision_credential":
+                credential = CredentialReference.objects.get(tenant=tenant, pk=request.POST["credential_id"], is_active=True)
+                password = request.POST["password"]
+                if password != request.POST["password_confirmation"]:
+                    raise ValidationError("Passwords do not match.")
+                LocalAgentSecretStore().store(reference=credential.secret_reference, username=request.POST["username"].strip(), password=password)
+                messages.success(request, "Device credential encrypted in the local collector vault. It was not stored in the database.")
             elif operation == "agent":
                 register_agent(tenant=tenant, actor=request.user, name=request.POST["name"].strip(), identity_fingerprint=request.POST["identity_fingerprint"].strip())
                 messages.success(request, "Collector agent registered pending independent activation.")
@@ -86,7 +94,7 @@ def collector_center(request):
             else:
                 raise ValidationError("Unknown collector operation.")
             return redirect("collector-center")
-        except (ValidationError, PermissionDenied, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, CollectionJob.DoesNotExist, KeyError, ValueError) as exc:
+        except (ValidationError, PermissionDenied, CollectorSecretError, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, CollectionJob.DoesNotExist, KeyError, ValueError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "collector/center.html", {
         "tenant": tenant,

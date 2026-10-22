@@ -19,9 +19,29 @@ class CollectorSecretConfigurationError(CollectorSecretError):
     pass
 
 
-def _key():
+def _key(root=None):
+    configured = settings.COLLECTOR_SECRET_KEY
+    if not configured:
+        key_path = Path(root or settings.COLLECTOR_SECRET_ROOT).resolve() / ".master.key"
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        if not key_path.exists():
+            temporary = key_path.with_suffix(".tmp")
+            try:
+                with temporary.open("xb") as handle:
+                    handle.write(base64.b64encode(secrets.token_bytes(32)))
+                try:
+                    os.chmod(temporary, 0o600)
+                except OSError:
+                    pass
+                os.replace(temporary, key_path)
+            except FileExistsError:
+                pass
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+        configured = key_path.read_text(encoding="ascii").strip()
     try:
-        value = base64.b64decode(settings.COLLECTOR_SECRET_KEY, validate=True)
+        value = base64.b64decode(configured, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise CollectorSecretConfigurationError("Collector secret key must be valid base64.") from exc
     if len(value) != 32:
@@ -50,7 +70,7 @@ class LocalAgentSecretStore:
             raise CollectorSecretError("Username and password are required.")
         plaintext = json.dumps({"username": username, "password": password}, separators=(",", ":")).encode("utf-8")
         nonce = secrets.token_bytes(12)
-        ciphertext = AESGCM(_key()).encrypt(nonce, plaintext, _aad(reference))
+        ciphertext = AESGCM(_key(self.root)).encrypt(nonce, plaintext, _aad(reference))
         payload = json.dumps({"version": 1, "nonce": base64.b64encode(nonce).decode("ascii"), "ciphertext": base64.b64encode(ciphertext).decode("ascii")}, separators=(",", ":"))
         path = self._path(reference); path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
@@ -72,7 +92,7 @@ class LocalAgentSecretStore:
             payload = json.loads(path.read_text(encoding="utf-8"))
             nonce = base64.b64decode(payload["nonce"], validate=True)
             ciphertext = base64.b64decode(payload["ciphertext"], validate=True)
-            plaintext = AESGCM(_key()).decrypt(nonce, ciphertext, _aad(reference))
+            plaintext = AESGCM(_key(self.root)).decrypt(nonce, ciphertext, _aad(reference))
             value = json.loads(plaintext.decode("utf-8"))
         except FileNotFoundError as exc:
             raise CollectorSecretError("Credential reference is not provisioned on this collector agent.") from exc

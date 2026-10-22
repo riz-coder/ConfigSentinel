@@ -143,6 +143,18 @@ class CollectorBoundaryTests(TestCase):
         self.assertNotContains(response, "Install Cisco IOS/IOS-XE draft profile")
         self.assertNotContains(response, self.credential.secret_reference)
 
+    def test_ui_provisions_credential_only_in_local_encrypted_store(self):
+        key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+        with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=key, COLLECTOR_SECRET_ROOT=directory):
+            client = self.api_client(self.owner)
+            response = client.post("/collector/", {"operation": "provision_credential", "credential_id": self.credential.id, "username": "readonly", "password": "synthetic-device-secret", "password_confirmation": "synthetic-device-secret"}, HTTP_X_TENANT_ID=str(self.tenant.id))
+            self.assertEqual(response.status_code, 302)
+            value = LocalAgentSecretStore().retrieve(self.credential.secret_reference)
+            self.assertEqual(value["username"], "readonly")
+            stored = next(Path(directory).rglob("*.json")).read_text(encoding="utf-8")
+            self.assertNotIn("readonly", stored)
+            self.assertNotIn("synthetic-device-secret", stored)
+
     def test_cisco_profile_requires_exact_manifest_and_independent_approval(self):
         profile, created = install_cisco_ios_xe_profile(tenant=self.tenant, actor=self.owner)
         self.assertTrue(created)
