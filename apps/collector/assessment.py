@@ -10,7 +10,7 @@ from .models import CollectionJob, CommandExecution, DeviceAssessment, Technical
 
 
 RULE_PACK = "cisco-network-deep-assessment"
-RULE_PACK_VERSION = 3
+RULE_PACK_VERSION = 4
 
 
 def _has_line(text, pattern):
@@ -47,6 +47,67 @@ def _config_rules(config, execution):
     snmp_result = "FAIL" if snmp_community else ("PASS" if snmp_v3 else "NOT_APPLICABLE")
     rules.append(_finding("CISCO.SNMP.VERSION", "MONITORING", "HIGH", snmp_result, "SNMP credential model", "SNMP community-string configuration was found." if snmp_community else ("SNMPv3 user configuration was found." if snmp_v3 else "No SNMP configuration was identified."), "Replace community-based SNMP with reviewed SNMPv3 authentication and privacy.", execution))
     return rules
+
+
+def _ios_interface_blocks(config):
+    blocks = {}
+    current = None
+    for raw_line in config.splitlines():
+        match = re.match(r"^interface\s+(\S+)", raw_line, re.I)
+        if match:
+            current = match.group(1)
+            blocks[current] = []
+        elif current and (raw_line.startswith(" ") or raw_line.startswith("\t")):
+            blocks[current].append(raw_line.strip())
+        elif raw_line and not raw_line.startswith((" ", "!")):
+            current = None
+    return blocks
+
+
+def _ios_hardening_rules(config, execution):
+    rules = []
+    blocks = _ios_interface_blocks(config)
+    vty_blocks = [lines for name, lines in blocks.items() if name.lower().startswith("vty")]
+    # IOS line sections are not interface sections, so parse them separately.
+    vty_sections = re.findall(r"^line vty[^\n]*\n((?:[ \t]+[^\n]*\n?)*)", config, re.I | re.M)
+    vty_acl_missing = [section for section in vty_sections if not re.search(r"^\s*access-class\s+\S+\s+in\b", section, re.I | re.M)]
+    vty_result = "UNKNOWN" if not vty_sections else ("FAIL" if vty_acl_missing else "PASS")
+    rules.append(_finding("CISCO.IOS.VTY.ACCESS_CLASS", "MANAGEMENT", "HIGH", vty_result, "VTY source restriction", "No VTY line sections were parsed." if not vty_sections else (f"{len(vty_acl_missing)} of {len(vty_sections)} VTY section(s) lack an inbound access-class." if vty_acl_missing else "Every parsed VTY section has an inbound access-class."), "Apply a reviewed management-source ACL to every active VTY range.", execution))
+
+    aaa_enabled = _has_line(config, r"^aaa new-model\s*$")
+    exec_auth = _has_line(config, r"^aaa authorization exec\s+")
+    aaa_result = "NOT_APPLICABLE" if not aaa_enabled else ("PASS" if exec_auth else "FAIL")
+    rules.append(_finding("CISCO.IOS.AAA.EXEC_AUTHORIZATION", "ACCESS_CONTROL", "HIGH", aaa_result, "AAA EXEC authorization", "AAA is not configured, so this dependent check is not applicable." if not aaa_enabled else ("AAA EXEC authorization is configured." if exec_auth else "AAA is enabled but no EXEC authorization method list was found."), "Configure a tested EXEC authorization method list with an approved fallback.", execution))
+
+    credential_lines = re.findall(r"^(?:username\s+\S+.*?\s+(?:password|secret)|enable\s+(?:password|secret))\s+(\d+)\s+", config, re.I | re.M)
+    weak_types = sorted({value for value in credential_lines if value in {"0", "4", "5", "7"}})
+    strong_types = sorted({value for value in credential_lines if value in {"6", "8", "9"}})
+    secret_result = "FAIL" if weak_types else ("PASS" if strong_types else "UNKNOWN")
+    secret_detail = f"Weak Cisco credential type(s) observed: {', '.join(weak_types)}." if weak_types else (f"Only reviewed stronger credential type(s) were observed: {', '.join(strong_types)}." if strong_types else "No typed local username/enable credential could be classified; external AAA or omitted privilege may apply.")
+    rules.append(_finding("CISCO.IOS.CREDENTIAL.STORAGE", "ACCESS_CONTROL", "HIGH", secret_result, "Local credential storage", secret_detail, "Replace type 0/4/5/7 local credentials with platform-supported type 8/9 secrets where compatible.", execution))
+
+    trunk_blocks = {name: lines for name, lines in blocks.items() if any(re.match(r"switchport mode trunk\b", line, re.I) for line in lines)}
+    native_vlan_1 = []
+    unrestricted = []
+    for name, lines in trunk_blocks.items():
+        native = next((re.match(r"switchport trunk native vlan\s+(\d+)", line, re.I) for line in lines if re.match(r"switchport trunk native vlan\s+(\d+)", line, re.I)), None)
+        if native is None or native.group(1) == "1":
+            native_vlan_1.append(name)
+        allowed = [line for line in lines if re.match(r"switchport trunk allowed vlan\b", line, re.I)]
+        if not allowed or any(re.search(r"\ball\b", line, re.I) for line in allowed):
+            unrestricted.append(name)
+    native_result = "NOT_APPLICABLE" if not trunk_blocks else ("WARNING" if native_vlan_1 else "PASS")
+    rules.append(_finding("CISCO.IOS.TRUNK.NATIVE_VLAN", "LAYER2", "MEDIUM", native_result, "Trunk native VLAN", "No configured trunk interfaces were parsed." if not trunk_blocks else (f"{len(native_vlan_1)} of {len(trunk_blocks)} configured trunk(s) use or implicitly default to native VLAN 1." if native_vlan_1 else "Every configured trunk has an explicit non-default native VLAN."), "Assign an unused reviewed native VLAN consistently at both ends after impact validation.", execution))
+    allowed_result = "NOT_APPLICABLE" if not trunk_blocks else ("WARNING" if unrestricted else "PASS")
+    rules.append(_finding("CISCO.IOS.TRUNK.ALLOWED_VLANS", "LAYER2", "MEDIUM", allowed_result, "Trunk VLAN allow-list", "No configured trunk interfaces were parsed." if not trunk_blocks else (f"{len(unrestricted)} of {len(trunk_blocks)} configured trunk(s) do not have a bounded VLAN allow-list." if unrestricted else "Every configured trunk has an explicit VLAN allow-list."), "Permit only VLANs required on each trunk after path and redundancy validation.", execution))
+
+    portfast_access = {name: lines for name, lines in blocks.items() if any(re.match(r"switchport mode access\b", line, re.I) for line in lines) and any(re.match(r"spanning-tree portfast\b", line, re.I) for line in lines)}
+    global_guard = _has_line(config, r"^spanning-tree portfast bpduguard default\s*$")
+    unguarded = [name for name, lines in portfast_access.items() if not global_guard and not any(re.match(r"spanning-tree bpduguard enable\b", line, re.I) for line in lines)]
+    guard_result = "NOT_APPLICABLE" if not portfast_access else ("FAIL" if unguarded else "PASS")
+    rules.append(_finding("CISCO.IOS.STP.PORTFAST_BPDU_GUARD", "LAYER2", "HIGH", guard_result, "PortFast BPDU Guard", "No explicit PortFast access interfaces were parsed." if not portfast_access else (f"{len(unguarded)} of {len(portfast_access)} PortFast access interface(s) lack effective BPDU Guard." if unguarded else "All parsed PortFast access interfaces are protected by global or interface BPDU Guard."), "Enable reviewed BPDU Guard protection on host-facing PortFast access ports.", execution))
+    facts = {"configured_interfaces": len(blocks), "configured_trunks": len(trunk_blocks), "trunks_native_vlan_1": len(native_vlan_1), "trunks_unrestricted": len(unrestricted), "portfast_access_ports": len(portfast_access), "portfast_without_bpduguard": len(unguarded), "vty_sections": len(vty_sections), "vty_without_access_class": len(vty_acl_missing), "weak_credential_types": weak_types}
+    return rules, facts
 
 
 def _output_rule(outputs, executions, key, rule_id, category, severity, title, good_pattern, pass_detail, fail_detail, remediation):
@@ -257,6 +318,10 @@ def assess_cisco_job(job_id, *, evidence_store=None):
             integrity_errors += 1
     config_item = outputs.get("running_config")
     findings = _config_rules(config_item[1] if config_item else None, config_item[0] if config_item else None)
+    hardening_facts = {}
+    if config_item and job.discovered_platform in {"IOS", "IOS-XE"}:
+        hardening_findings, hardening_facts = _ios_hardening_rules(config_item[1], config_item[0])
+        findings.extend(hardening_findings)
     findings.append(_finding("CISCO.TRANSPORT.TELNET", "MANAGEMENT", "HIGH", "FAIL" if job.device.transport == "TELNET" else "PASS", "Collector management transport", "Collector access uses clear-text Telnet under an approved exception." if job.device.transport == "TELNET" else "Collector access uses SSH with a pinned host key.", "Migrate the management plane to SSH and revoke the Telnet exception." if job.device.transport == "TELNET" else ""))
     findings.append(_output_rule(outputs, executions, "time_sync", "CISCO.TIME.NTP_STATE", "TIME", "MEDIUM", "NTP synchronization evidence", r"^[*+#o]", "At least one selected/valid NTP association was observed.", "No selected NTP association was identified in command output.", "Verify reachability, synchronization and approved NTP sources."))
     findings.append(_output_rule(outputs, executions, "logging_posture", "CISCO.LOGGING.ACTIVE", "LOGGING", "MEDIUM", "Logging operational state", r"logging to|trap logging|syslog logging", "Operational logging output was observed.", "Operational output did not demonstrate active remote logging.", "Verify the remote collector path and receipt on the logging platform."))
@@ -272,7 +337,7 @@ def assess_cisco_job(job_id, *, evidence_store=None):
     TechnicalFinding.objects.bulk_create([TechnicalFinding(tenant=job.tenant, assessment=assessment, **item) for item in findings])
     counts = {state: sum(1 for item in findings if item["result"] == state) for state in TechnicalFinding.Result.values}
     overall = "ERROR" if counts["ERROR"] else ("FAIL" if counts["FAIL"] else ("WARNING" if counts["WARNING"] else ("UNKNOWN" if counts["UNKNOWN"] else "PASS")))
-    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **structured_facts, **deep_facts, **compatibility_facts}
+    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, "configuration": hardening_facts, **structured_facts, **deep_facts, **compatibility_facts}
     assessment.result = overall; assessment.facts = facts
     assessment.save(update_fields=["result", "facts"])
     AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.assessment_completed", object_type="DeviceAssessment", object_id=str(assessment.id), metadata={"result": overall, "rule_pack": RULE_PACK, "rule_pack_version": RULE_PACK_VERSION})

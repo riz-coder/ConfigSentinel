@@ -1,0 +1,12 @@
+version 15.1
+aaa new-model
+username legacy privilege 15 password 7 ANONYMIZED
+ip ssh version 2
+interface GigabitEthernet1/1
+ switchport mode trunk
+interface GigabitEthernet1/2
+ switchport mode access
+ spanning-tree portfast
+line vty 0 4
+ transport input ssh
+end

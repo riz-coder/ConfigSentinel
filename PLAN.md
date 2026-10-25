@@ -2,6 +2,25 @@
 
 ## Current work package
 
+`WP-NET-10` — deterministic Cisco IOS configuration-assessment rules.
+
+- Parse global configuration, interface blocks and VTY sections from authenticated
+  encrypted running-configuration evidence.
+- Evaluate VTY source ACLs, AAA EXEC authorization, Cisco credential storage
+  types, trunk native/allowed VLAN posture and PortFast BPDU Guard coverage.
+- Link each PASS/FAIL/WARNING/UNKNOWN/NOT_APPLICABLE outcome to the immutable
+  running-config command execution and evidence hash; never render raw secrets.
+- Keep the rule pack technical and vendor-sourced; no PTA compliance conclusion.
+
+Acceptance: anonymized strong/weak IOS fixtures produce deterministic outcomes;
+missing configuration remains UNKNOWN; every finding retains evidence lineage.
+
+Dependencies/blockers: the Catalyst model-specific profile must be independently
+approved so `show run` evidence becomes available. NX-OS requires a separate rule
+variant instead of reusing IOS syntax.
+
+### Previous work package
+
 `WP-NET-09` — model-locked Cisco command profiles and fail-closed selection.
 
 - Add an immutable exact target-model contract to command profiles.

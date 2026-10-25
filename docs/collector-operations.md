@@ -1,5 +1,16 @@
 # Read-only collector operations
 
+## WP-NET-10 IOS configuration assessment
+
+Rule-pack version 4 parses IOS global, interface and VTY configuration and checks
+management-source ACLs, AAA EXEC authorization, credential storage types, trunk
+native/allowed VLAN restrictions and PortFast BPDU Guard coverage. Every result
+links back to the encrypted running-configuration execution and SHA-256 evidence.
+
+These rules are deterministic Cisco technical baselines, not legal mappings.
+Missing or unreadable configuration remains UNKNOWN. IOS syntax is not applied to
+NX-OS; that platform needs its own reviewed variant and firmware fixtures.
+
 ## WP-NET-09 model-aware command selection
 
 Profiles may now be locked to an exact discovered Cisco model. Queue selection

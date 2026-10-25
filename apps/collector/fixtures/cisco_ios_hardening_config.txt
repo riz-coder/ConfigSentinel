@@ -1,0 +1,23 @@
+version 15.2
+aaa new-model
+aaa authentication login default group tacacs+ local
+aaa authorization exec default group tacacs+ local if-authenticated
+username fallback privilege 15 secret 8 $8$ANONYMIZED
+ip ssh version 2
+no ip http server
+spanning-tree portfast bpduguard default
+interface GigabitEthernet1/1
+ description ANONYMIZED-UPLINK
+ switchport mode trunk
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30
+interface GigabitEthernet1/2
+ description ANONYMIZED-HOST
+ switchport mode access
+ switchport access vlan 20
+ spanning-tree portfast
+line vty 0 4
+ access-class MGMT-SOURCES in
+ transport input ssh
+ login authentication default
+end

@@ -151,6 +151,7 @@ def device_assessment_report(request, assessment_id):
         "layer2": {"vlan_count": None, "trunk_count": None, "port_channel_count": None, "port_channels_not_up": None},
         "routing": {"ospf_neighbors": None, "ospf_full": None, "bgp_neighbors": None, "bgp_established": None},
         "topology": {"cdp_neighbors": None, "lldp_neighbors": None},
+        "configuration": {"configured_interfaces": None, "configured_trunks": None, "trunks_native_vlan_1": None, "trunks_unrestricted": None, "portfast_access_ports": None, "portfast_without_bpduguard": None, "vty_sections": None, "vty_without_access_class": None},
     }
     for key, defaults in fact_sections.items():
         assessment.facts[key] = {**defaults, **assessment.facts.get(key, {})}

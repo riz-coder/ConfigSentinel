@@ -21,7 +21,7 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
-from .assessment import _command_compatibility_rules, _deep_operational_rules, _structured_device_rules
+from .assessment import _command_compatibility_rules, _deep_operational_rules, _ios_hardening_rules, _structured_device_rules
 from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
@@ -338,6 +338,32 @@ class CollectorAgentExecutionTests(TestCase):
         self.assertEqual(findings[0]["result"], "UNKNOWN")
         self.assertEqual(findings[0]["category"], "COMPATIBILITY")
         self.assertEqual(facts["unavailable_command_count"], 1)
+
+    def test_ios_hardening_fixture_produces_evidence_linked_passes(self):
+        config = (Path(__file__).with_name("fixtures") / "cisco_ios_hardening_config.txt").read_text(encoding="utf-8")
+        evidence = SimpleNamespace(state=CommandExecution.State.SUCCEEDED)
+        findings, facts = _ios_hardening_rules(config, evidence)
+        results = {item["rule_id"]: item["result"] for item in findings}
+        self.assertEqual(results["CISCO.IOS.VTY.ACCESS_CLASS"], "PASS")
+        self.assertEqual(results["CISCO.IOS.AAA.EXEC_AUTHORIZATION"], "PASS")
+        self.assertEqual(results["CISCO.IOS.CREDENTIAL.STORAGE"], "PASS")
+        self.assertEqual(results["CISCO.IOS.TRUNK.NATIVE_VLAN"], "PASS")
+        self.assertEqual(results["CISCO.IOS.TRUNK.ALLOWED_VLANS"], "PASS")
+        self.assertEqual(results["CISCO.IOS.STP.PORTFAST_BPDU_GUARD"], "PASS")
+        self.assertTrue(all(item["evidence_execution"] is evidence for item in findings))
+        self.assertEqual(facts["configured_trunks"], 1)
+
+    def test_ios_hardening_weak_fixture_identifies_specific_gaps(self):
+        config = (Path(__file__).with_name("fixtures") / "cisco_ios_hardening_weak_config.txt").read_text(encoding="utf-8")
+        findings, facts = _ios_hardening_rules(config, SimpleNamespace())
+        results = {item["rule_id"]: item["result"] for item in findings}
+        self.assertEqual(results["CISCO.IOS.VTY.ACCESS_CLASS"], "FAIL")
+        self.assertEqual(results["CISCO.IOS.AAA.EXEC_AUTHORIZATION"], "FAIL")
+        self.assertEqual(results["CISCO.IOS.CREDENTIAL.STORAGE"], "FAIL")
+        self.assertEqual(results["CISCO.IOS.TRUNK.NATIVE_VLAN"], "WARNING")
+        self.assertEqual(results["CISCO.IOS.TRUNK.ALLOWED_VLANS"], "WARNING")
+        self.assertEqual(results["CISCO.IOS.STP.PORTFAST_BPDU_GUARD"], "FAIL")
+        self.assertEqual(facts["weak_credential_types"], ["7"])
 
     def test_agent_secret_store_encrypts_and_authenticates(self):
         with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=self.secret_key, COLLECTOR_SECRET_ROOT=directory):
