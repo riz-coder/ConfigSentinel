@@ -21,7 +21,7 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
-from .assessment import _deep_operational_rules, _structured_device_rules
+from .assessment import _command_compatibility_rules, _deep_operational_rules, _structured_device_rules
 from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
@@ -308,6 +308,13 @@ class CollectorAgentExecutionTests(TestCase):
         findings, facts = _structured_device_rules({"interfaces_status": (evidence, "unexpected output")}, {})
         self.assertEqual(findings[0]["result"], "UNKNOWN")
         self.assertEqual(facts["interfaces"]["recognized"], 0)
+
+    def test_unsupported_model_command_is_explicit_unknown(self):
+        execution = SimpleNamespace(state=CommandExecution.State.UNSUPPORTED, reason="COMMAND_UNSUPPORTED")
+        findings, facts = _command_compatibility_rules({"stp_inconsistent": execution})
+        self.assertEqual(findings[0]["result"], "UNKNOWN")
+        self.assertEqual(findings[0]["category"], "COMPATIBILITY")
+        self.assertEqual(facts["unavailable_command_count"], 1)
 
     def test_agent_secret_store_encrypts_and_authenticates(self):
         with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=self.secret_key, COLLECTOR_SECRET_ROOT=directory):

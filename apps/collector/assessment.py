@@ -93,7 +93,7 @@ def _deep_operational_rules(outputs, executions):
                 rows.append(line.split()[0])
         findings.append(_finding("CISCO.INTERFACE.ERROR_COUNTERS", "OPERATIONS", "MEDIUM", "WARNING" if rows else "PASS", "Interface error counters", f"Non-zero error/discard counters were observed on {len(rows)} interface(s)." if rows else "No non-zero values were observed in the collected interface error-counter table.", "Establish a time-based baseline and investigate affected links; cumulative counters alone do not prove a current fault.", execution))
         facts["interfaces_with_nonzero_error_counters"] = len(rows)
-        facts["interfaces_with_errors"] = rows[:50]
+        facts["interfaces_with_errors"] = list(dict.fromkeys(rows))[:50]
 
     stp = outputs.get("stp_inconsistent")
     if stp:
@@ -210,6 +210,29 @@ def _structured_device_rules(outputs, executions):
     return findings, facts
 
 
+def _command_compatibility_rules(executions):
+    findings = []
+    unsupported = []
+    unavailable_states = {
+        CommandExecution.State.UNSUPPORTED,
+        CommandExecution.State.DENIED,
+        CommandExecution.State.TIMEOUT,
+        CommandExecution.State.TRUNCATED,
+        CommandExecution.State.ERROR,
+    }
+    for key, execution in executions.items():
+        if execution.state not in unavailable_states:
+            continue
+        unsupported.append({"key": key, "state": execution.state, "reason": execution.reason})
+        findings.append(_finding(
+            f"CISCO.COMMAND.{key.upper()}", "COMPATIBILITY", "MEDIUM", "UNKNOWN" if execution.state != CommandExecution.State.ERROR else "ERROR",
+            f"{key.replace('_', ' ').title()} command unavailable",
+            f"The approved command returned {execution.state}: {execution.reason or 'NO_REASON_RECORDED'}. No technical PASS was inferred.",
+            "Select a separately reviewed model/firmware command-profile revision or correct read-only command authorization; then recollect.", execution,
+        ))
+    return findings, {"unavailable_commands": unsupported, "unavailable_command_count": len(unsupported)}
+
+
 @transaction.atomic
 def assess_cisco_job(job_id, *, evidence_store=None):
     evidence_store = evidence_store or LocalEncryptedObjectStore()
@@ -242,12 +265,14 @@ def assess_cisco_job(job_id, *, evidence_store=None):
     findings.extend(deep_findings)
     structured_findings, structured_facts = _structured_device_rules(outputs, executions)
     findings.extend(structured_findings)
+    compatibility_findings, compatibility_facts = _command_compatibility_rules(executions)
+    findings.extend(compatibility_findings)
     if integrity_errors:
         findings.append(_finding("CISCO.EVIDENCE.INTEGRITY", "EVIDENCE", "CRITICAL", "ERROR", "Snapshot integrity/read failure", f"{integrity_errors} successful command snapshot(s) could not be authenticated and read.", "Investigate encrypted evidence storage and recollect."))
     TechnicalFinding.objects.bulk_create([TechnicalFinding(tenant=job.tenant, assessment=assessment, **item) for item in findings])
     counts = {state: sum(1 for item in findings if item["result"] == state) for state in TechnicalFinding.Result.values}
     overall = "ERROR" if counts["ERROR"] else ("FAIL" if counts["FAIL"] else ("WARNING" if counts["WARNING"] else ("UNKNOWN" if counts["UNKNOWN"] else "PASS")))
-    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **structured_facts, **deep_facts}
+    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **structured_facts, **deep_facts, **compatibility_facts}
     assessment.result = overall; assessment.facts = facts
     assessment.save(update_fields=["result", "facts"])
     AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.assessment_completed", object_type="DeviceAssessment", object_id=str(assessment.id), metadata={"result": overall, "rule_pack": RULE_PACK, "rule_pack_version": RULE_PACK_VERSION})

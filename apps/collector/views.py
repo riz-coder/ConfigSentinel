@@ -146,7 +146,7 @@ def device_assessment_report(request, assessment_id):
     }
     for key, defaults in fact_sections.items():
         assessment.facts[key] = {**defaults, **assessment.facts.get(key, {})}
-    for key in ("interfaces_with_nonzero_error_counters", "hsrp_groups", "hsrp_degraded_groups", "vpc_configured", "stp_inconsistent_ports_clear"):
+    for key in ("interfaces_with_nonzero_error_counters", "hsrp_groups", "hsrp_degraded_groups", "vpc_configured", "stp_inconsistent_ports_clear", "unavailable_command_count"):
         assessment.facts.setdefault(key, None)
     findings = list(assessment.findings.order_by("category", "rule_id"))
     sections = []

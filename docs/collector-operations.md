@@ -13,6 +13,11 @@ visibility only; they do not establish correct design or PTA compliance. Parser
 support still requires validation against anonymized captures from each claimed
 firmware train.
 
+Commands unavailable on a discovered model/release are listed as COMPATIBILITY
+findings with their execution state and reason. A replacement command must enter
+a new immutable profile revision and receive independent operator/code review;
+the collector never lets an AI improvise a live command or silently substitute it.
+
 ## WP-NET-07 Cisco deep-assessment v2
 
 The collector UI can create separate IOS/IOS-XE and NX-OS v2 draft manifests.

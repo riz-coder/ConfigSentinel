@@ -10,6 +10,9 @@
   running configuration or internal neighbor addresses.
 - Treat unrecognized output as UNKNOWN; inventory visibility is not a health PASS.
 - Preserve exact command and output hash lineage for every derived finding.
+- Record every unsupported, denied, timed-out, truncated or errored approved
+  command as an explicit COMPATIBILITY finding. Never convert a missing
+  model/firmware command into a zero count or technical PASS.
 
 Acceptance: representative IOS/NX-OS parser fixtures cover healthy, degraded and
 unrecognized output; tenant-scoped report rendering exposes no raw configuration;
