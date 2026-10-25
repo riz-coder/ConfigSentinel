@@ -25,7 +25,7 @@ from .assessment import _command_compatibility_rules, _deep_operational_rules, _
 from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
-from .services import CISCO_IOS_XE_DEEP_COMMANDS, CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_DEEP_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_deep_profile, install_cisco_ios_xe_profile, install_cisco_nxos_deep_profile, register_agent, register_device, request_collection
+from .services import CISCO_CATALYST_4948_COMMANDS, CISCO_IOS_XE_DEEP_COMMANDS, CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_DEEP_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_catalyst_4948_profile, install_cisco_ios_xe_deep_profile, install_cisco_ios_xe_profile, install_cisco_nxos_deep_profile, register_agent, register_device, request_collection
 
 
 class CollectorBoundaryTests(TestCase):
@@ -199,6 +199,29 @@ class CollectorBoundaryTests(TestCase):
         approve_command_profile(profile=nxos, actor=self.reviewer, approval_reference="NET-DEEP-REVIEW-1")
         nxos.refresh_from_db()
         self.assertEqual(nxos.status, CommandProfile.Status.APPROVED)
+
+    def test_catalyst_4948_profile_is_model_locked_and_independently_reviewed(self):
+        profile, created = install_catalyst_4948_profile(tenant=self.tenant, actor=self.owner)
+        self.assertTrue(created)
+        self.assertEqual(profile.target_model, "WS-C4948E-F")
+        self.assertEqual(profile.command_count, 29)
+        self.assertEqual(tuple(profile.commands.values_list("key", "command_text", "purpose", "contains_sensitive_output")), CISCO_CATALYST_4948_COMMANDS)
+        self.assertTrue(profile.commands.filter(key="running_config", command_text="show run").exists())
+        self.assertFalse(profile.commands.filter(key="stp_inconsistent").exists())
+        approve_command_profile(profile=profile, actor=self.reviewer, approval_reference="CAT4948-REVIEW-1")
+        profile.refresh_from_db()
+        self.assertEqual(profile.status, CommandProfile.Status.APPROVED)
+
+    def test_model_locked_profile_rejects_device_without_matching_discovery(self):
+        profile, _ = install_catalyst_4948_profile(tenant=self.tenant, actor=self.owner)
+        approve_command_profile(profile=profile, actor=self.reviewer, approval_reference="CAT4948-REVIEW-2")
+        profile.refresh_from_db()
+        self.device.platform = "IOS"
+        self.device.save(update_fields=["platform"])
+        self.grant.max_commands = 30
+        self.grant.save(update_fields=["max_commands"])
+        with self.assertRaisesMessage(ValidationError, "latest discovered device model"):
+            self.request_job(command_profile=profile)
 
     def test_tampered_command_profile_cannot_be_approved(self):
         profile, _ = install_cisco_ios_xe_profile(tenant=self.tenant, actor=self.owner)

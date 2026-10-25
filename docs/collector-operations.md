@@ -1,5 +1,18 @@
 # Read-only collector operations
 
+## WP-NET-09 model-aware command selection
+
+Profiles may now be locked to an exact discovered Cisco model. Queue selection
+prefers an approved exact-model profile over a generic platform profile only when
+the latest stored discovery matches. The collector repeats that model check from
+the live `show version` response before it runs the rest of the manifest.
+
+The WS-C4948E-F compatibility profile is shipped as a draft with 29 bounded
+read-only commands. It uses the observed `show run` variant and omits the command
+that this firmware rejected. Independent operator/code-review approval remains
+mandatory. Other models continue on a generic reviewed profile and expose each
+unsupported command as UNKNOWN until their own reviewed revision exists.
+
 ## WP-NET-08 structured device report
 
 New assessments derive bounded counts and health observations for interfaces,

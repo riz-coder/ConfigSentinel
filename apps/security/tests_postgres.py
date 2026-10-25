@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from apps.auditlog.models import AuditEvent
 from apps.evidence.models import CustodyEvent, EvidenceArtifact
-from apps.collector.models import Device
+from apps.collector.models import CommandProfile, Device
 from apps.inventory.models import Site
 import base64
 
@@ -19,6 +19,23 @@ from apps.tenancy.rls import set_rls_context
 
 
 class PostgreSQLBoundaryTests(TransactionTestCase):
+    @skipUnlessDBFeature("supports_transactions")
+    def test_approved_command_profile_target_is_database_immutable(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL-specific command-profile guard test")
+        user = get_user_model().objects.create_user(username="profile-db-guard")
+        tenant = Tenant.objects.create(name="Profile Guard", slug="profile-guard")
+        with transaction.atomic():
+            set_rls_context(user_id=user.pk, tenant_id=tenant.pk)
+            profile = CommandProfile.objects.create(
+                tenant=tenant, name="Reviewed profile", vendor=Device.Vendor.CISCO,
+                platform="IOS_IOS_XE", target_model="WS-C4948E-F", version=3,
+                manifest_sha256="a" * 64, command_count=1, status=CommandProfile.Status.APPROVED,
+                created_by=user, approved_by=user, approved_at=timezone.now(), approval_reference="TEST-REVIEW",
+            )
+            with self.assertRaises(DatabaseError), transaction.atomic():
+                CommandProfile.objects.filter(pk=profile.pk).update(target_model="OTHER")
+
     @skipUnlessDBFeature("supports_transactions")
     def test_forced_rls_hides_and_rejects_cross_tenant_rows(self):
         if connection.vendor != "postgresql":

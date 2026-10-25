@@ -118,6 +118,7 @@ class CommandProfile(models.Model):
     name = models.CharField(max_length=120)
     vendor = models.CharField(max_length=20, choices=Device.Vendor.choices)
     platform = models.CharField(max_length=80)
+    target_model = models.CharField(max_length=120, blank=True, help_text="Exact discovered model; blank means platform-generic.")
     version = models.PositiveIntegerField(default=1)
     manifest_sha256 = models.CharField(max_length=64)
     command_count = models.PositiveIntegerField(default=0)

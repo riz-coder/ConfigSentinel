@@ -83,11 +83,25 @@ CISCO_NXOS_DEEP_COMMANDS = CISCO_NXOS_READ_ONLY_COMMANDS + (
     ("stp_inconsistent", "show spanning-tree inconsistentports", CommandDefinition.Purpose.OPERATIONS, False),
 )
 
+CISCO_CATALYST_4948_COMMANDS = tuple(
+    (key, "show run", purpose, sensitive) if key == "running_config" else (key, command, purpose, sensitive)
+    for key, command, purpose, sensitive in CISCO_IOS_XE_DEEP_COMMANDS
+    if key != "stp_inconsistent"
+)
+
 CISCO_PROFILE_MANIFESTS = {
     ("IOS_IOS_XE", 1): CISCO_IOS_XE_READ_ONLY_COMMANDS,
     ("IOS_IOS_XE", 2): CISCO_IOS_XE_DEEP_COMMANDS,
     ("NX-OS", 1): CISCO_NXOS_READ_ONLY_COMMANDS,
     ("NX-OS", 2): CISCO_NXOS_DEEP_COMMANDS,
+    ("IOS_IOS_XE", 3): CISCO_CATALYST_4948_COMMANDS,
+}
+CISCO_PROFILE_TARGETS = {
+    ("IOS_IOS_XE", 1): "",
+    ("IOS_IOS_XE", 2): "",
+    ("NX-OS", 1): "",
+    ("NX-OS", 2): "",
+    ("IOS_IOS_XE", 3): "WS-C4948E-F",
 }
 
 
@@ -231,11 +245,20 @@ def install_cisco_nxos_deep_profile(*, tenant, actor):
     )
 
 
-def _install_cisco_profile(*, tenant, actor, name, platform, version, commands):
+@transaction.atomic
+def install_catalyst_4948_profile(*, tenant, actor):
+    return _install_cisco_profile(
+        tenant=tenant, actor=actor, name="Cisco Catalyst 4948 IOS assessment",
+        platform="IOS_IOS_XE", target_model="WS-C4948E-F", version=3,
+        commands=CISCO_CATALYST_4948_COMMANDS,
+    )
+
+
+def _install_cisco_profile(*, tenant, actor, name, platform, version, commands, target_model=""):
     _operator(actor, tenant)
     profile, created = CommandProfile.objects.get_or_create(
         tenant=tenant, name=name, version=version,
-        defaults={"vendor": Device.Vendor.CISCO, "platform": platform, "manifest_sha256": _profile_manifest(commands), "command_count": len(commands), "created_by": actor},
+        defaults={"vendor": Device.Vendor.CISCO, "platform": platform, "target_model": target_model, "manifest_sha256": _profile_manifest(commands), "command_count": len(commands), "created_by": actor},
     )
     if created:
         CommandDefinition.objects.bulk_create([
@@ -258,7 +281,8 @@ def approve_command_profile(*, profile, actor, approval_reference):
     commands = list(profile.commands.order_by("sequence"))
     actual = tuple((item.key, item.command_text, item.purpose, item.contains_sensitive_output) for item in commands)
     expected = CISCO_PROFILE_MANIFESTS.get((profile.platform, profile.version))
-    if profile.vendor != Device.Vendor.CISCO or expected is None or actual != expected:
+    expected_target = CISCO_PROFILE_TARGETS.get((profile.platform, profile.version))
+    if profile.vendor != Device.Vendor.CISCO or expected is None or actual != expected or profile.target_model != expected_target:
         raise ValidationError("Profile commands do not exactly match the reviewed Cisco IOS/IOS-XE read-only allowlist.")
     if profile.command_count != len(actual) or profile.manifest_sha256 != _profile_manifest(actual):
         raise ValidationError("Command-profile count or manifest integrity check failed.")
@@ -311,6 +335,10 @@ def request_collection(*, tenant, actor, device, agent, scope_grant, command_pro
     supported_platform = command_profile.platform.upper() == normalized or (command_profile.platform == "IOS_IOS_XE" and normalized in {"IOS", "IOS-XE", "IOS-IOS-XE"}) or (command_profile.platform == "NX-OS" and normalized in {"NXOS", "NX-OS"})
     if command_profile.vendor != device.vendor or not supported_platform:
         raise ValidationError("The command profile does not support this device platform.")
+    if command_profile.target_model:
+        last_identity = CollectionJob.objects.filter(device=device).exclude(discovered_model="").order_by("-created_at").first()
+        if last_identity is None or last_identity.discovered_model.upper() != command_profile.target_model.upper():
+            raise ValidationError("The model-specific command profile does not match the latest discovered device model.")
     if device.transport == Device.Transport.TELNET and not device.telnet_approved_at:
         raise ValidationError("Telnet transport has not received independent exception approval.")
     if device.transport == Device.Transport.SSH and observed_host_key_sha256 != device.pinned_host_key_sha256:

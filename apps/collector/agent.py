@@ -265,6 +265,8 @@ def run_collection_job(job_id, *, secret_store=None, evidence_store=None, connec
         expected_platform = device.platform.upper().replace("_", "-").replace(" ", "-")
         if device.vendor != identity.vendor or (identity.platform == "NX-OS" and expected_platform not in {"NXOS", "NX-OS"}) or (identity.platform in {"IOS", "IOS-XE"} and expected_platform not in {identity.platform, "IOS-IOS-XE"}):
             raise CollectorExecutionError("DISCOVERED_PLATFORM_MISMATCH")
+        if job.command_profile.target_model and identity.model.upper() != job.command_profile.target_model.upper():
+            raise CollectorExecutionError("DISCOVERED_MODEL_PROFILE_MISMATCH")
         job.discovered_vendor, job.discovered_platform, job.discovered_model, job.discovered_release = identity.vendor, identity.platform, identity.model, identity.release
         job.save(update_fields=["discovered_vendor", "discovered_platform", "discovered_model", "discovered_release"])
         _transition(job, CollectionJob.State.COLLECTING)

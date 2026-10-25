@@ -2,6 +2,26 @@
 
 ## Current work package
 
+`WP-NET-09` — model-locked Cisco command profiles and fail-closed selection.
+
+- Add an immutable exact target-model contract to command profiles.
+- Prefer the newest independently approved exact-model profile only when it
+  matches the latest discovered identity; otherwise retain the platform-generic
+  profile and explicit COMPATIBILITY gaps.
+- Re-check the model after live `show version` discovery before any remaining
+  command executes, preventing stale identity from selecting an unsafe profile.
+- Provide a Catalyst WS-C4948E-F draft reflecting observed command compatibility;
+  it cannot run until a different authorized reviewer approves its manifest.
+
+Acceptance: exact model match is checked at queue and execution time; approved
+profile target/manifest fields are database-immutable; mismatch tests fail closed;
+no AI-generated or unreviewed command reaches a device.
+
+Dependencies/blockers: each additional model/firmware family needs anonymized
+real-device fixtures and operator/code-review signoff before support is claimed.
+
+### Previous work package
+
 `WP-NET-08` — evidence-linked structured Cisco network report.
 
 - Parse bounded interface, VLAN, trunk, port-channel, STP, CDP/LLDP, OSPF, BGP,
