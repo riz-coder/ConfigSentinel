@@ -21,7 +21,7 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
-from .assessment import _deep_operational_rules
+from .assessment import _deep_operational_rules, _structured_device_rules
 from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
@@ -282,6 +282,33 @@ class CollectorAgentExecutionTests(TestCase):
         self.assertEqual(results["CISCO.STP.INCONSISTENT_PORTS"], "PASS")
         self.assertEqual(facts["interfaces_with_nonzero_error_counters"], 1)
 
+    def test_structured_parser_builds_bounded_network_facts(self):
+        evidence = SimpleNamespace(state=CommandExecution.State.SUCCEEDED)
+        outputs = {
+            "interfaces_status": (evidence, "Gi1/0/1 uplink connected trunk full 1000\nGi1/0/2 user err-disabled 10 auto auto"),
+            "vlans": (evidence, "1 default active\n20 USERS active"),
+            "trunks": (evidence, "Gi1/0/1 on 802.1q trunking 1"),
+            "etherchannel": (evidence, "1 Po1(SU) LACP Gi1/0/1(P)"),
+            "cdp_topology": (evidence, "Device ID: core-1\nDevice ID: access-2"),
+            "ospf_neighbors": (evidence, "10.0.0.1 1 FULL/DR 00:00:30 10.0.0.1 Gi1/0/1"),
+            "bgp_summary": (evidence, "10.0.0.2 4 65001 10 10 0 0 0 1d 5"),
+        }
+        findings, facts = _structured_device_rules(outputs, {})
+        results = {item["rule_id"]: item["result"] for item in findings}
+        self.assertEqual(facts["interfaces"]["error_disabled"], 1)
+        self.assertEqual(facts["layer2"]["vlan_count"], 2)
+        self.assertEqual(facts["layer2"]["trunk_count"], 1)
+        self.assertEqual(facts["topology"]["cdp_neighbors"], 2)
+        self.assertEqual(facts["routing"]["ospf_full"], 1)
+        self.assertEqual(facts["routing"]["bgp_established"], 1)
+        self.assertEqual(results["CISCO.INTERFACE.STATUS"], "WARNING")
+
+    def test_unrecognized_structured_output_never_becomes_pass(self):
+        evidence = SimpleNamespace(state=CommandExecution.State.SUCCEEDED)
+        findings, facts = _structured_device_rules({"interfaces_status": (evidence, "unexpected output")}, {})
+        self.assertEqual(findings[0]["result"], "UNKNOWN")
+        self.assertEqual(facts["interfaces"]["recognized"], 0)
+
     def test_agent_secret_store_encrypts_and_authenticates(self):
         with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=self.secret_key, COLLECTOR_SECRET_ROOT=directory):
             store = LocalAgentSecretStore(); store.store(reference=self.credential.secret_reference, username="readonly", password="synthetic-password")
@@ -314,6 +341,16 @@ class CollectorAgentExecutionTests(TestCase):
             self.assertEqual(assessment.result, "FAIL")
             self.assertTrue(TechnicalFinding.objects.filter(assessment=assessment, rule_id="CISCO.PSIRT.CORRELATION", result=TechnicalFinding.Result.UNKNOWN).exists())
             self.assertTrue(TechnicalFinding.objects.filter(assessment=assessment, evidence_execution__isnull=False).exists())
+            self.client.force_login(self.owner)
+            otp = TOTPDevice.objects.create(user=self.owner, name="assessment-report", confirmed=True)
+            session = self.client.session
+            session["otp_device_id"] = otp.persistent_id
+            session.save()
+            report = self.client.get(f"/collector/assessments/{assessment.id}/", HTTP_X_TENANT_ID=str(self.tenant.id))
+            self.assertEqual(report.status_code, 200)
+            self.assertContains(report, "Routing & resilience")
+            self.assertContains(report, "Technical assessment")
+            self.assertNotContains(report, "Synthetic supported read-only output")
             snapshot = RawSnapshot.objects.filter(execution__job=job).first()
             self.assertTrue(LocalEncryptedObjectStore(directory).retrieve_and_verify(snapshot))
 

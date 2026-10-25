@@ -1,5 +1,18 @@
 # Read-only collector operations
 
+## WP-NET-08 structured device report
+
+New assessments derive bounded counts and health observations for interfaces,
+VLANs, trunks, port channels, STP, topology neighbors, OSPF, BGP, HSRP, vPC and
+interface error counters. Reports group findings by technical category and retain
+the exact approved command plus output SHA-256 as evidence lineage. They never
+render the raw running configuration or neighbor IP addresses.
+
+An unfamiliar output format produces UNKNOWN, not PASS. Counts prove collection
+visibility only; they do not establish correct design or PTA compliance. Parser
+support still requires validation against anonymized captures from each claimed
+firmware train.
+
 ## WP-NET-07 Cisco deep-assessment v2
 
 The collector UI can create separate IOS/IOS-XE and NX-OS v2 draft manifests.

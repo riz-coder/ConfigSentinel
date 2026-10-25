@@ -2,6 +2,24 @@
 
 ## Current work package
 
+`WP-NET-08` — evidence-linked structured Cisco network report.
+
+- Parse bounded interface, VLAN, trunk, port-channel, STP, CDP/LLDP, OSPF, BGP,
+  HSRP, vPC and interface-error facts from encrypted command evidence.
+- Show operational summaries and category-grouped findings without rendering raw
+  running configuration or internal neighbor addresses.
+- Treat unrecognized output as UNKNOWN; inventory visibility is not a health PASS.
+- Preserve exact command and output hash lineage for every derived finding.
+
+Acceptance: representative IOS/NX-OS parser fixtures cover healthy, degraded and
+unrecognized output; tenant-scoped report rendering exposes no raw configuration;
+technical outcomes cannot create a regulatory compliance status.
+
+Dependencies/blockers: real supported-firmware captures are still required for
+parser certification. Official Cisco PSIRT correlation remains a later reviewed WP.
+
+### Previous work package
+
 `WP-NET-07` — versioned Cisco deep-assessment profile and bounded operational parsers.
 
 - Add independently reviewed IOS/IOS-XE and NX-OS v2 manifests without mutating

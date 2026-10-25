@@ -9,7 +9,7 @@ from apps.inventory.models import Asset
 from apps.tenancy.access import tenant_for_request
 from apps.tenancy.models import Membership
 
-from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
+from .models import CollectionJob, CollectorAgent, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
 from .dispatcher import dispatch_local_job
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
 from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_deep_profile, install_cisco_nxos_deep_profile, register_agent, register_credential_reference, register_device, request_collection
@@ -138,4 +138,29 @@ def collector_center(request):
 def device_assessment_report(request, assessment_id):
     tenant = tenant_for_request(request)
     assessment = get_object_or_404(DeviceAssessment.objects.select_related("job__device").prefetch_related("findings__evidence_execution__command"), tenant=tenant, pk=assessment_id)
-    return render(request, "collector/assessment_report.html", {"tenant": tenant, "assessment": assessment, "findings": assessment.findings.order_by("category", "rule_id")})
+    fact_sections = {
+        "interfaces": {"recognized": None, "connected": None, "not_connected": None, "disabled": None, "error_disabled": None},
+        "layer2": {"vlan_count": None, "trunk_count": None, "port_channel_count": None, "port_channels_not_up": None},
+        "routing": {"ospf_neighbors": None, "ospf_full": None, "bgp_neighbors": None, "bgp_established": None},
+        "topology": {"cdp_neighbors": None, "lldp_neighbors": None},
+    }
+    for key, defaults in fact_sections.items():
+        assessment.facts[key] = {**defaults, **assessment.facts.get(key, {})}
+    for key in ("interfaces_with_nonzero_error_counters", "hsrp_groups", "hsrp_degraded_groups", "vpc_configured", "stp_inconsistent_ports_clear"):
+        assessment.facts.setdefault(key, None)
+    findings = list(assessment.findings.order_by("category", "rule_id"))
+    sections = []
+    for category in dict.fromkeys(item.category for item in findings):
+        items = [item for item in findings if item.category == category]
+        sections.append({
+            "name": category.replace("_", " ").title(),
+            "items": items,
+            "failures": sum(item.result in {"FAIL", "ERROR"} for item in items),
+            "warnings": sum(item.result == "WARNING" for item in items),
+        })
+    coverage = []
+    for state, label in CommandExecution.State.choices:
+        count = assessment.job.command_executions.filter(state=state).count()
+        if count:
+            coverage.append({"state": state, "label": label, "count": count})
+    return render(request, "collector/assessment_report.html", {"tenant": tenant, "assessment": assessment, "findings": findings, "sections": sections, "coverage": coverage})

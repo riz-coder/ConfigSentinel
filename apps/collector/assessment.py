@@ -9,8 +9,8 @@ from apps.evidence.vault import EvidenceIntegrityError, LocalEncryptedObjectStor
 from .models import CollectionJob, CommandExecution, DeviceAssessment, TechnicalFinding
 
 
-RULE_PACK = "cisco-ios-xe-baseline"
-RULE_PACK_VERSION = 2
+RULE_PACK = "cisco-network-deep-assessment"
+RULE_PACK_VERSION = 3
 
 
 def _has_line(text, pattern):
@@ -63,7 +63,15 @@ def _output_rule(outputs, executions, key, rule_id, category, severity, title, g
 
 def _deep_operational_rules(outputs, executions):
     findings = []
-    facts = {}
+    facts = {
+        "vpc_configured": None,
+        "interfaces_with_nonzero_error_counters": None,
+        "interfaces_with_errors": [],
+        "stp_inconsistent_ports_clear": None,
+        "hsrp_groups": None,
+        "hsrp_ready_groups": None,
+        "hsrp_degraded_groups": None,
+    }
     vpc = outputs.get("vpc")
     if vpc:
         execution, text = vpc
@@ -85,6 +93,7 @@ def _deep_operational_rules(outputs, executions):
                 rows.append(line.split()[0])
         findings.append(_finding("CISCO.INTERFACE.ERROR_COUNTERS", "OPERATIONS", "MEDIUM", "WARNING" if rows else "PASS", "Interface error counters", f"Non-zero error/discard counters were observed on {len(rows)} interface(s)." if rows else "No non-zero values were observed in the collected interface error-counter table.", "Establish a time-based baseline and investigate affected links; cumulative counters alone do not prove a current fault.", execution))
         facts["interfaces_with_nonzero_error_counters"] = len(rows)
+        facts["interfaces_with_errors"] = rows[:50]
 
     stp = outputs.get("stp_inconsistent")
     if stp:
@@ -93,13 +102,111 @@ def _deep_operational_rules(outputs, executions):
         findings.append(_finding("CISCO.STP.INCONSISTENT_PORTS", "LAYER2", "HIGH", "PASS" if clear else "WARNING", "Spanning-tree inconsistent ports", "The command reported no inconsistent spanning-tree ports." if clear else "The output did not establish that the inconsistent-port count is zero.", "Review root/loop/PVID/type inconsistency details and validate the Layer-2 design.", execution))
         facts["stp_inconsistent_ports_clear"] = clear
 
-    for key, fact, label in (("vrfs", "vrf_evidence_collected", "VRF inventory"), ("trunks", "trunk_evidence_collected", "Trunk inventory"), ("hsrp", "hsrp_evidence_collected", "HSRP state"), ("ospf_interfaces", "ospf_interface_evidence_collected", "OSPF interfaces"), ("bgp_neighbors_detail", "bgp_neighbor_evidence_collected", "BGP neighbors")):
+    hsrp = outputs.get("hsrp")
+    if hsrp:
+        execution, text = hsrp
+        rows = [line for line in text.splitlines() if re.match(r"^\s*(?:Vlan|Eth|Gi|Fa|Te|Po)\S*\s+\d+\s+", line, re.I)]
+        active_or_standby = sum(1 for line in rows if re.search(r"\b(?:Active|Standby)\b", line, re.I))
+        degraded = sum(1 for line in rows if re.search(r"\b(?:Init|Learn|Listen|Speak)\b", line, re.I))
+        facts.update({"hsrp_groups": len(rows), "hsrp_ready_groups": active_or_standby, "hsrp_degraded_groups": degraded})
+        result = "UNKNOWN" if not rows else ("WARNING" if degraded else "PASS")
+        findings.append(_finding("CISCO.HSRP.HEALTH", "RESILIENCE", "HIGH", result, "HSRP group health", f"Parsed {len(rows)} group(s); {active_or_standby} are Active/Standby and {degraded} are in transitional states." if rows else "HSRP output was collected but no group rows could be parsed.", "Investigate HSRP groups in Init, Learn, Listen or Speak state.", execution))
+
+    for key, fact, label in (("vrfs", "vrf_evidence_collected", "VRF inventory"), ("trunks", "trunk_evidence_collected", "Trunk inventory"), ("ospf_interfaces", "ospf_interface_evidence_collected", "OSPF interfaces"), ("bgp_neighbors_detail", "bgp_neighbor_evidence_collected", "BGP neighbors")):
         if key in outputs:
             facts[fact] = True
             execution, _ = outputs[key]
             findings.append(_finding(f"CISCO.DEEP.{key.upper()}", "INVENTORY", "INFO", "PASS", label, f"Readable {label.lower()} evidence was collected; this records visibility, not configuration correctness.", "", execution))
         elif executions.get(key) and executions[key].state == CommandExecution.State.NOT_APPLICABLE:
             facts[fact] = False
+    return findings, facts
+
+
+def _structured_device_rules(outputs, executions):
+    findings = []
+    facts = {
+        "interfaces": {"recognized": None, "connected": None, "not_connected": None, "disabled": None, "error_disabled": None},
+        "layer2": {"vlan_count": None, "trunk_count": None, "port_channel_count": None, "port_channels_not_up": None},
+        "routing": {"ospf_neighbors": None, "ospf_full": None, "bgp_neighbors": None, "bgp_established": None},
+        "topology": {"cdp_neighbors": None, "lldp_neighbors": None},
+    }
+
+    status = outputs.get("interfaces_status")
+    if status:
+        execution, text = status
+        states = {"connected": 0, "not_connected": 0, "disabled": 0, "error_disabled": 0}
+        recognized = 0
+        for line in text.splitlines():
+            if not re.match(r"^\s*(?:Eth|Gi|Fa|Te|Hu|Twe|Fo|mgmt|Po)\S+\s+", line, re.I):
+                continue
+            recognized += 1
+            lower = line.lower()
+            if re.search(r"\berr-?disabled\b", lower):
+                states["error_disabled"] += 1
+            elif re.search(r"\bnotconnect(?:ed)?\b", lower):
+                states["not_connected"] += 1
+            elif re.search(r"\b(?:disabled|administratively down)\b", lower):
+                states["disabled"] += 1
+            elif re.search(r"\bconnected\b", lower):
+                states["connected"] += 1
+        facts["interfaces"] = {"recognized": recognized, **states}
+        result = "UNKNOWN" if not recognized else ("WARNING" if states["error_disabled"] else "PASS")
+        detail = "Interface-status output format was not recognized." if not recognized else f"Parsed {recognized} interfaces: {states['connected']} connected, {states['not_connected']} not connected, {states['disabled']} disabled and {states['error_disabled']} error-disabled."
+        findings.append(_finding("CISCO.INTERFACE.STATUS", "OPERATIONS", "HIGH", result, "Interface operational summary", detail, "Investigate error-disabled interfaces and validate intentional shutdowns." if states["error_disabled"] else "", execution))
+
+    vlans = outputs.get("vlans")
+    if vlans:
+        execution, text = vlans
+        vlan_ids = {match.group(1) for line in text.splitlines() if (match := re.match(r"^\s*(\d{1,4})\s+\S+", line)) and 1 <= int(match.group(1)) <= 4094}
+        facts["layer2"]["vlan_count"] = len(vlan_ids)
+        findings.append(_finding("CISCO.VLAN.INVENTORY", "LAYER2", "INFO", "PASS" if vlan_ids else "UNKNOWN", "VLAN inventory", f"Parsed {len(vlan_ids)} VLAN entries." if vlan_ids else "No VLAN rows could be parsed from the collected output.", "", execution))
+
+    trunks = outputs.get("trunks")
+    if trunks:
+        execution, text = trunks
+        trunk_ports = {match.group(1) for line in text.splitlines() if (match := re.match(r"^\s*((?:Eth|Gi|Fa|Te|Hu|Twe|Fo|Po)\S*)\s+.+\b(?:trunking|on)\b", line, re.I))}
+        facts["layer2"]["trunk_count"] = len(trunk_ports)
+        findings.append(_finding("CISCO.TRUNK.INVENTORY", "LAYER2", "INFO", "PASS" if trunk_ports else "UNKNOWN", "Operational trunks", f"Parsed {len(trunk_ports)} operational trunk interface(s)." if trunk_ports else "Trunk output was collected but no operational trunk row could be parsed.", "Validate expected trunk state and allowed/native VLAN design.", execution))
+
+    channels = outputs.get("etherchannel")
+    if channels:
+        execution, text = channels
+        groups = re.findall(r"^\s*\d+\s+(Po\d+)\(([^)]+)\)", text, re.I | re.M)
+        unhealthy = [name for name, flags in groups if "U" not in flags.upper()]
+        facts["layer2"].update({"port_channel_count": len(groups), "port_channels_not_up": len(unhealthy)})
+        result = "UNKNOWN" if not groups else ("WARNING" if unhealthy else "PASS")
+        findings.append(_finding("CISCO.PORT_CHANNEL.HEALTH", "LAYER2", "HIGH", result, "Port-channel health", f"Parsed {len(groups)} port-channel(s); {len(unhealthy)} did not carry an up/in-use flag." if groups else "No port-channel summary rows could be parsed.", "Review member consistency, suspension and protocol state for unhealthy bundles.", execution))
+
+    for key, label in (("cdp_topology", "CDP"), ("lldp_topology", "LLDP")):
+        item = outputs.get(key)
+        if not item:
+            continue
+        execution, text = item
+        if label == "CDP":
+            count = len(re.findall(r"^Device ID\s*:", text, re.I | re.M))
+        else:
+            count = max(len(re.findall(r"^System Name\s*:", text, re.I | re.M)), len(re.findall(r"^Chassis id\s*:", text, re.I | re.M)))
+        facts["topology"][f"{label.lower()}_neighbors"] = count
+        findings.append(_finding(f"CISCO.TOPOLOGY.{label}", "TOPOLOGY", "INFO", "PASS" if count else "UNKNOWN", f"{label} neighbor visibility", f"Parsed {count} neighbor record(s)." if count else f"{label} output was collected but no neighbor records could be parsed.", "Validate discovery protocol scope and disabled links where topology is expected.", execution))
+
+    ospf = outputs.get("ospf_neighbors")
+    if ospf:
+        execution, text = ospf
+        rows = [line for line in text.splitlines() if re.match(r"^\s*\d{1,3}(?:\.\d{1,3}){3}\s+", line)]
+        full = sum(1 for line in rows if re.search(r"\bFULL(?:/|-|\s)", line, re.I))
+        facts["routing"].update({"ospf_neighbors": len(rows), "ospf_full": full})
+        result = "UNKNOWN" if not rows else ("WARNING" if full != len(rows) else "PASS")
+        findings.append(_finding("CISCO.OSPF.NEIGHBORS", "ROUTING", "HIGH", result, "OSPF adjacency health", f"Parsed {len(rows)} OSPF neighbor(s); {full} are FULL." if rows else "No OSPF neighbor rows could be parsed.", "Investigate neighbors not reaching FULL state.", execution))
+
+    bgp = outputs.get("bgp_summary")
+    if bgp:
+        execution, text = bgp
+        rows = [line.split() for line in text.splitlines() if re.match(r"^\s*(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]+)\s+", line, re.I)]
+        established = sum(1 for row in rows if row and row[-1].isdigit())
+        facts["routing"].update({"bgp_neighbors": len(rows), "bgp_established": established})
+        result = "UNKNOWN" if not rows else ("WARNING" if established != len(rows) else "PASS")
+        findings.append(_finding("CISCO.BGP.NEIGHBORS", "ROUTING", "HIGH", result, "BGP session health", f"Parsed {len(rows)} BGP neighbor(s); {established} appear established." if rows else "No BGP summary rows could be parsed.", "Investigate peers whose state column is not a received-prefix count.", execution))
+
     return findings, facts
 
 
@@ -133,12 +240,14 @@ def assess_cisco_job(job_id, *, evidence_store=None):
     findings.append(_finding("CISCO.PSIRT.CORRELATION", "VULNERABILITY", "HIGH", "UNKNOWN", "Cisco security advisory correlation", f"Device release {job.discovered_release or 'UNKNOWN'} was identified, but no reviewed Cisco advisory feed is installed.", "Integrate and review the official Cisco advisory feed before asserting affected/not-affected status.", outputs.get("platform_version", (None,))[0]))
     deep_findings, deep_facts = _deep_operational_rules(outputs, executions)
     findings.extend(deep_findings)
+    structured_findings, structured_facts = _structured_device_rules(outputs, executions)
+    findings.extend(structured_findings)
     if integrity_errors:
         findings.append(_finding("CISCO.EVIDENCE.INTEGRITY", "EVIDENCE", "CRITICAL", "ERROR", "Snapshot integrity/read failure", f"{integrity_errors} successful command snapshot(s) could not be authenticated and read.", "Investigate encrypted evidence storage and recollect."))
     TechnicalFinding.objects.bulk_create([TechnicalFinding(tenant=job.tenant, assessment=assessment, **item) for item in findings])
     counts = {state: sum(1 for item in findings if item["result"] == state) for state in TechnicalFinding.Result.values}
     overall = "ERROR" if counts["ERROR"] else ("FAIL" if counts["FAIL"] else ("WARNING" if counts["WARNING"] else ("UNKNOWN" if counts["UNKNOWN"] else "PASS")))
-    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **deep_facts}
+    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **structured_facts, **deep_facts}
     assessment.result = overall; assessment.facts = facts
     assessment.save(update_fields=["result", "facts"])
     AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.assessment_completed", object_type="DeviceAssessment", object_id=str(assessment.id), metadata={"result": overall, "rule_pack": RULE_PACK, "rule_pack_version": RULE_PACK_VERSION})
