@@ -104,6 +104,21 @@ def collector_center(request):
             return redirect("collector-center")
         except (ValidationError, PermissionDenied, CollectorSecretError, Asset.DoesNotExist, Device.DoesNotExist, CollectorAgent.DoesNotExist, CredentialReference.DoesNotExist, ScopeGrant.DoesNotExist, CommandProfile.DoesNotExist, CollectionJob.DoesNotExist, KeyError, ValueError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
+    scope_grants = list(ScopeGrant.objects.filter(tenant=tenant).select_related("device", "agent"))
+    now = timezone.now()
+    for grant in scope_grants:
+        if grant.status != ScopeGrant.Status.APPROVED:
+            grant.ui_authorization_state = grant.status
+            grant.ui_can_queue = False
+        elif now < grant.valid_from:
+            grant.ui_authorization_state = "NOT YET VALID"
+            grant.ui_can_queue = False
+        elif now >= grant.valid_until:
+            grant.ui_authorization_state = "EXPIRED"
+            grant.ui_can_queue = False
+        else:
+            grant.ui_authorization_state = "ACTIVE"
+            grant.ui_can_queue = True
     return render(request, "collector/center.html", {
         "tenant": tenant,
         "can_manage": can_manage,
@@ -113,7 +128,7 @@ def collector_center(request):
         "devices": Device.objects.filter(tenant=tenant).select_related("asset", "created_by", "telnet_approved_by"),
         "agents": CollectorAgent.objects.filter(tenant=tenant),
         "credential_references": CredentialReference.objects.filter(tenant=tenant),
-        "scope_grants": ScopeGrant.objects.filter(tenant=tenant).select_related("device", "agent"),
+        "scope_grants": scope_grants,
         "profiles": CommandProfile.objects.filter(tenant=tenant).prefetch_related("commands"),
         "jobs": CollectionJob.objects.filter(tenant=tenant).select_related("device")[:25],
     })

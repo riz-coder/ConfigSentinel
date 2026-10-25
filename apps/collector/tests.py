@@ -114,6 +114,9 @@ class CollectorBoundaryTests(TestCase):
         expired.refresh_from_db()
         with self.assertRaisesMessage(ValidationError, "current approved"):
             self.request_job(scope_grant=expired)
+        response = self.api_client(self.owner).get("/collector/", HTTP_X_TENANT_ID=str(self.tenant.id))
+        self.assertContains(response, "EXPIRED")
+        self.assertContains(response, "Create and independently approve a new authorization scope.")
 
     def test_one_active_job_per_device(self):
         self.request_job()
