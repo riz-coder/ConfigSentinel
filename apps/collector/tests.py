@@ -5,6 +5,7 @@ import tempfile
 from unittest.mock import patch
 from pathlib import Path
 from datetime import timedelta
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -20,10 +21,11 @@ from apps.tenancy.rls import set_rls_context
 
 from apps.evidence.vault import LocalEncryptedObjectStore
 from .agent import CollectorExecutionError, parse_cisco_show_version, run_collection_job
+from .assessment import _deep_operational_rules
 from .dispatcher import dispatch_local_job
 from .models import CollectionJob, CollectorAgent, CommandDefinition, CommandExecution, CommandProfile, CredentialReference, Device, DeviceAssessment, RawSnapshot, ScopeGrant, TechnicalFinding
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
-from .services import CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_profile, register_agent, register_device, request_collection
+from .services import CISCO_IOS_XE_DEEP_COMMANDS, CISCO_IOS_XE_READ_ONLY_COMMANDS, CISCO_NXOS_DEEP_COMMANDS, CISCO_NXOS_READ_ONLY_COMMANDS, activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_deep_profile, install_cisco_ios_xe_profile, install_cisco_nxos_deep_profile, register_agent, register_device, request_collection
 
 
 class CollectorBoundaryTests(TestCase):
@@ -182,6 +184,19 @@ class CollectorBoundaryTests(TestCase):
         expected = [list(item) for item in CISCO_IOS_XE_READ_ONLY_COMMANDS]
         self.assertEqual(fixture["commands"], expected)
 
+    def test_deep_profiles_are_versioned_immutable_drafts_with_30_commands(self):
+        ios, ios_created = install_cisco_ios_xe_deep_profile(tenant=self.tenant, actor=self.owner)
+        nxos, nxos_created = install_cisco_nxos_deep_profile(tenant=self.tenant, actor=self.owner)
+        self.assertTrue(ios_created)
+        self.assertTrue(nxos_created)
+        self.assertEqual((ios.version, ios.status, ios.command_count), (2, CommandProfile.Status.DRAFT, 30))
+        self.assertEqual((nxos.version, nxos.status, nxos.command_count), (2, CommandProfile.Status.DRAFT, 30))
+        self.assertEqual(tuple(ios.commands.values_list("key", "command_text", "purpose", "contains_sensitive_output")), CISCO_IOS_XE_DEEP_COMMANDS)
+        self.assertEqual(tuple(nxos.commands.values_list("key", "command_text", "purpose", "contains_sensitive_output")), CISCO_NXOS_DEEP_COMMANDS)
+        approve_command_profile(profile=nxos, actor=self.reviewer, approval_reference="NET-DEEP-REVIEW-1")
+        nxos.refresh_from_db()
+        self.assertEqual(nxos.status, CommandProfile.Status.APPROVED)
+
     def test_tampered_command_profile_cannot_be_approved(self):
         profile, _ = install_cisco_ios_xe_profile(tenant=self.tenant, actor=self.owner)
         command = profile.commands.get(key="platform_version")
@@ -249,6 +264,20 @@ class CollectorAgentExecutionTests(TestCase):
         output = (Path(__file__).with_name("fixtures") / "cisco_nxos_show_version_10_3.txt").read_text(encoding="utf-8")
         identity = parse_cisco_show_version(output)
         self.assertEqual((identity.vendor, identity.platform, identity.model, identity.release), (Device.Vendor.CISCO, "NX-OS", "Nexus9000", "10.3(4a)"))
+
+    def test_deep_parser_reports_vpc_and_interface_health_without_guessing(self):
+        evidence = SimpleNamespace(state=CommandExecution.State.SUCCEEDED)
+        outputs = {
+            "vpc": (evidence, "Peer status : peer adjacency formed ok\nvPC keep-alive status : peer is alive\nConfiguration consistency status: success"),
+            "interface_errors": (evidence, "Port Align-Err FCS-Err Xmit-Err Rcv-Err\nEth1/1 0 2 0 0"),
+            "stp_inconsistent": (evidence, "Number of inconsistent ports (segments) in the system : 0"),
+        }
+        findings, facts = _deep_operational_rules(outputs, {})
+        results = {item["rule_id"]: item["result"] for item in findings}
+        self.assertEqual(results["CISCO.VPC.HEALTH"], "PASS")
+        self.assertEqual(results["CISCO.INTERFACE.ERROR_COUNTERS"], "WARNING")
+        self.assertEqual(results["CISCO.STP.INCONSISTENT_PORTS"], "PASS")
+        self.assertEqual(facts["interfaces_with_nonzero_error_counters"], 1)
 
     def test_agent_secret_store_encrypts_and_authenticates(self):
         with tempfile.TemporaryDirectory() as directory, override_settings(COLLECTOR_SECRET_KEY=self.secret_key, COLLECTOR_SECRET_ROOT=directory):

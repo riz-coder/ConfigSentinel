@@ -12,7 +12,7 @@ from apps.tenancy.models import Membership
 from .models import CollectionJob, CollectorAgent, CommandProfile, CredentialReference, Device, DeviceAssessment, ScopeGrant
 from .dispatcher import dispatch_local_job
 from .secretstore import CollectorSecretError, LocalAgentSecretStore
-from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, register_agent, register_credential_reference, register_device, request_collection
+from .services import activate_agent, approve_command_profile, approve_scope, approve_telnet_device, create_scope_grant, install_cisco_ios_xe_deep_profile, install_cisco_nxos_deep_profile, register_agent, register_credential_reference, register_device, request_collection
 
 
 @login_required
@@ -70,7 +70,7 @@ def collector_center(request):
             elif operation == "queue_collection":
                 grant = ScopeGrant.objects.select_related("device", "agent").get(tenant=tenant, pk=request.POST["scope_id"])
                 normalized = grant.device.platform.upper().replace("_", "-").replace(" ", "-")
-                candidates = CommandProfile.objects.filter(tenant=tenant, vendor=grant.device.vendor, status=CommandProfile.Status.APPROVED)
+                candidates = CommandProfile.objects.filter(tenant=tenant, vendor=grant.device.vendor, status=CommandProfile.Status.APPROVED).order_by("-version", "-created_at")
                 profile = next((item for item in candidates if item.platform.upper() == normalized or (item.platform == "IOS_IOS_XE" and normalized in {"IOS", "IOS-XE", "IOS-IOS-XE"}) or (item.platform == "NX-OS" and normalized in {"NXOS", "NX-OS"})), None)
                 if profile is None:
                     raise ValidationError("No independently approved command profile supports this device yet.")
@@ -90,6 +90,11 @@ def collector_center(request):
                 profile = CommandProfile.objects.get(tenant=tenant, pk=request.POST["profile_id"])
                 approve_command_profile(profile=profile, actor=request.user, approval_reference=request.POST.get("approval_reference"))
                 messages.success(request, "Command profile independently approved.")
+            elif operation == "install_deep_profiles":
+                _, ios_created = install_cisco_ios_xe_deep_profile(tenant=tenant, actor=request.user)
+                _, nxos_created = install_cisco_nxos_deep_profile(tenant=tenant, actor=request.user)
+                created = sum((ios_created, nxos_created))
+                messages.success(request, f"{created} Cisco deep-assessment draft profile(s) created. A different authorized reviewer must inspect and approve each exact manifest.")
             elif operation == "approve_telnet":
                 device = Device.objects.get(tenant=tenant, pk=request.POST["device_id"])
                 approve_telnet_device(device=device, actor=request.user, approval_reference=request.POST.get("approval_reference", "").strip())

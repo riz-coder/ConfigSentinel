@@ -10,7 +10,7 @@ from .models import CollectionJob, CommandExecution, DeviceAssessment, Technical
 
 
 RULE_PACK = "cisco-ios-xe-baseline"
-RULE_PACK_VERSION = 1
+RULE_PACK_VERSION = 2
 
 
 def _has_line(text, pattern):
@@ -61,6 +61,48 @@ def _output_rule(outputs, executions, key, rule_id, category, severity, title, g
     return _finding(rule_id, category, severity, "PASS" if passed else "WARNING", title, pass_detail if passed else fail_detail, remediation, execution)
 
 
+def _deep_operational_rules(outputs, executions):
+    findings = []
+    facts = {}
+    vpc = outputs.get("vpc")
+    if vpc:
+        execution, text = vpc
+        healthy = all(marker in text.lower() for marker in ("peer adjacency formed ok", "peer is alive", "configuration consistency status: success"))
+        findings.append(_finding("CISCO.VPC.HEALTH", "RESILIENCE", "HIGH", "PASS" if healthy else "WARNING", "vPC peer health", "vPC peer adjacency, keepalive and consistency are healthy." if healthy else "vPC is configured, but the collected summary did not demonstrate healthy adjacency, keepalive and consistency together.", "Review peer-link, keepalive and consistency output before making a change.", execution))
+        facts["vpc_configured"] = True
+    elif executions.get("vpc"):
+        facts["vpc_configured"] = False
+
+    errors = outputs.get("interface_errors")
+    if errors:
+        execution, text = errors
+        rows = []
+        for line in text.splitlines():
+            if not re.match(r"^\s*(?:Eth|Gi|Fa|Te|Hu|Twe|Fo|mgmt|Po|Port-channel)\S*\s+", line, re.I):
+                continue
+            values = [int(value) for value in re.findall(r"(?<![\w/.-])\d+(?![\w/.-])", line)]
+            if any(value > 0 for value in values):
+                rows.append(line.split()[0])
+        findings.append(_finding("CISCO.INTERFACE.ERROR_COUNTERS", "OPERATIONS", "MEDIUM", "WARNING" if rows else "PASS", "Interface error counters", f"Non-zero error/discard counters were observed on {len(rows)} interface(s)." if rows else "No non-zero values were observed in the collected interface error-counter table.", "Establish a time-based baseline and investigate affected links; cumulative counters alone do not prove a current fault.", execution))
+        facts["interfaces_with_nonzero_error_counters"] = len(rows)
+
+    stp = outputs.get("stp_inconsistent")
+    if stp:
+        execution, text = stp
+        clear = bool(re.search(r"(?:number of inconsistent ports.*?0|no inconsistent ports|none)", text, re.I))
+        findings.append(_finding("CISCO.STP.INCONSISTENT_PORTS", "LAYER2", "HIGH", "PASS" if clear else "WARNING", "Spanning-tree inconsistent ports", "The command reported no inconsistent spanning-tree ports." if clear else "The output did not establish that the inconsistent-port count is zero.", "Review root/loop/PVID/type inconsistency details and validate the Layer-2 design.", execution))
+        facts["stp_inconsistent_ports_clear"] = clear
+
+    for key, fact, label in (("vrfs", "vrf_evidence_collected", "VRF inventory"), ("trunks", "trunk_evidence_collected", "Trunk inventory"), ("hsrp", "hsrp_evidence_collected", "HSRP state"), ("ospf_interfaces", "ospf_interface_evidence_collected", "OSPF interfaces"), ("bgp_neighbors_detail", "bgp_neighbor_evidence_collected", "BGP neighbors")):
+        if key in outputs:
+            facts[fact] = True
+            execution, _ = outputs[key]
+            findings.append(_finding(f"CISCO.DEEP.{key.upper()}", "INVENTORY", "INFO", "PASS", label, f"Readable {label.lower()} evidence was collected; this records visibility, not configuration correctness.", "", execution))
+        elif executions.get(key) and executions[key].state == CommandExecution.State.NOT_APPLICABLE:
+            facts[fact] = False
+    return findings, facts
+
+
 @transaction.atomic
 def assess_cisco_job(job_id, *, evidence_store=None):
     evidence_store = evidence_store or LocalEncryptedObjectStore()
@@ -89,12 +131,14 @@ def assess_cisco_job(job_id, *, evidence_store=None):
     findings.append(_output_rule(outputs, executions, "time_sync", "CISCO.TIME.NTP_STATE", "TIME", "MEDIUM", "NTP synchronization evidence", r"^[*+#o]", "At least one selected/valid NTP association was observed.", "No selected NTP association was identified in command output.", "Verify reachability, synchronization and approved NTP sources."))
     findings.append(_output_rule(outputs, executions, "logging_posture", "CISCO.LOGGING.ACTIVE", "LOGGING", "MEDIUM", "Logging operational state", r"logging to|trap logging|syslog logging", "Operational logging output was observed.", "Operational output did not demonstrate active remote logging.", "Verify the remote collector path and receipt on the logging platform."))
     findings.append(_finding("CISCO.PSIRT.CORRELATION", "VULNERABILITY", "HIGH", "UNKNOWN", "Cisco security advisory correlation", f"Device release {job.discovered_release or 'UNKNOWN'} was identified, but no reviewed Cisco advisory feed is installed.", "Integrate and review the official Cisco advisory feed before asserting affected/not-affected status.", outputs.get("platform_version", (None,))[0]))
+    deep_findings, deep_facts = _deep_operational_rules(outputs, executions)
+    findings.extend(deep_findings)
     if integrity_errors:
         findings.append(_finding("CISCO.EVIDENCE.INTEGRITY", "EVIDENCE", "CRITICAL", "ERROR", "Snapshot integrity/read failure", f"{integrity_errors} successful command snapshot(s) could not be authenticated and read.", "Investigate encrypted evidence storage and recollect."))
     TechnicalFinding.objects.bulk_create([TechnicalFinding(tenant=job.tenant, assessment=assessment, **item) for item in findings])
     counts = {state: sum(1 for item in findings if item["result"] == state) for state in TechnicalFinding.Result.values}
     overall = "ERROR" if counts["ERROR"] else ("FAIL" if counts["FAIL"] else ("WARNING" if counts["WARNING"] else ("UNKNOWN" if counts["UNKNOWN"] else "PASS")))
-    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts}
+    facts = {"vendor": job.discovered_vendor, "platform": job.discovered_platform, "model": job.discovered_model, "release": job.discovered_release, "commands_succeeded": len(outputs), "commands_total": job.command_executions.count(), "finding_counts": counts, **deep_facts}
     assessment.result = overall; assessment.facts = facts
     assessment.save(update_fields=["result", "facts"])
     AuditEvent.objects.create(tenant=job.tenant, actor=job.requested_by, action="collector.assessment_completed", object_type="DeviceAssessment", object_id=str(assessment.id), metadata={"result": overall, "rule_pack": RULE_PACK, "rule_pack_version": RULE_PACK_VERSION})

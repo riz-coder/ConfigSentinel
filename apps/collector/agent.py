@@ -33,6 +33,12 @@ CAPABILITY_RULES = {
     "aaa_servers": (r"(?:^|\n)(?:aaa\s+new-model|feature\s+tacacs\+|tacacs-server|radius-server)\b", "EXTERNAL_AAA_NOT_CONFIGURED"),
     "time_sync": (r"(?:^|\n)ntp\s+(?:server|peer)\b", "NTP_NOT_CONFIGURED"),
     "snmp_posture": (r"(?:^|\n)snmp-server\b", "SNMP_NOT_CONFIGURED"),
+    "vrfs": (r"(?:^|\n)(?:vrf\s+(?:context|definition)|ip\s+vrf)\b", "VRF_NOT_CONFIGURED"),
+    "vpc": (r"(?:^|\n)(?:feature\s+vpc|vpc\s+domain)\b", "VPC_NOT_CONFIGURED"),
+    "hsrp": (r"(?:^|\n)(?:feature\s+hsrp|standby\s+\d+)\b", "HSRP_NOT_CONFIGURED"),
+    "trunks": (r"(?:^|\n)\s*switchport\s+(?:mode\s+trunk|trunk\s+allowed|trunk\s+native)\b", "TRUNKING_NOT_CONFIGURED"),
+    "ospf_interfaces": (r"(?:^|\n)(?:feature\s+ospf|router\s+ospf)\b", "OSPF_NOT_CONFIGURED"),
+    "bgp_neighbors_detail": (r"(?:^|\n)(?:feature\s+bgp|router\s+bgp)\b", "BGP_NOT_CONFIGURED"),
 }
 
 

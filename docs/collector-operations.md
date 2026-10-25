@@ -1,5 +1,21 @@
 # Read-only collector operations
 
+## WP-NET-07 Cisco deep-assessment v2
+
+The collector UI can create separate IOS/IOS-XE and NX-OS v2 draft manifests.
+They contain exactly 30 reviewed read-only commands, so approved v1 manifests
+remain immutable and usable. A different tenant owner or compliance lead must
+inspect and approve each exact manifest before it is eligible for collection.
+
+The capability planner uses the already captured running configuration only to
+skip irrelevant VRF, vPC, HSRP, trunk, OSPF and BGP commands. It cannot construct
+commands from device text. The assessment records bounded vPC health, interface
+error-counter and spanning-tree observations. Cumulative counters require an
+operator baseline; inventory visibility alone does not assert healthy design.
+
+Actual supported-firmware validation and signed operator review remain required.
+This technical output does not establish PTA compliance.
+
 ## WP-NET-02 local/on-prem execution slice
 
 The application can now dispatch an authorized job from the Collector Setup UI

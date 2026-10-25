@@ -2,6 +2,26 @@
 
 ## Current work package
 
+`WP-NET-07` — versioned Cisco deep-assessment profile and bounded operational parsers.
+
+- Add independently reviewed IOS/IOS-XE and NX-OS v2 manifests without mutating
+  approved v1 profiles. Each stays within the default 30-command scope budget.
+- Cover VRF, trunks, HSRP, routing detail, interface errors and STP; NX-OS also
+  covers vPC health using exact read-only commands.
+- Select only the newest compatible approved profile. Feature commands are
+  capability-gated; absent or unreadable evidence cannot become PASS.
+- Parse bounded operational health observations without treating inventory
+  visibility as proof that configuration is correct.
+
+Acceptance: v2 exact-manifest and independent-approval tests pass; command budget
+is enforced; technical findings retain evidence lineage and never create a legal
+compliance conclusion.
+
+Dependencies/blockers: actual supported-firmware validation plus operator/code
+review are required before v2 approval. Cisco PSIRT correlation remains UNKNOWN.
+
+### Previous work package
+
 `WP-NET-06` — capability-driven Cisco command planning baseline.
 
 - Use authenticated `show version` and running-configuration evidence to detect

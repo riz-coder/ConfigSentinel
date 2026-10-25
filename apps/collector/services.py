@@ -61,6 +61,35 @@ CISCO_NXOS_READ_ONLY_COMMANDS = (
     ("memory", "show processes memory", CommandDefinition.Purpose.OPERATIONS, False),
 )
 
+CISCO_IOS_XE_DEEP_COMMANDS = CISCO_IOS_XE_READ_ONLY_COMMANDS + (
+    ("vrfs", "show vrf", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("trunks", "show interfaces trunk", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("hsrp", "show standby brief", CommandDefinition.Purpose.OPERATIONS, False),
+    ("ospf_interfaces", "show ip ospf interface brief", CommandDefinition.Purpose.OPERATIONS, False),
+    ("bgp_neighbors_detail", "show ip bgp neighbors", CommandDefinition.Purpose.OPERATIONS, True),
+    ("interface_errors", "show interfaces counters errors", CommandDefinition.Purpose.OPERATIONS, False),
+    ("stp_inconsistent", "show spanning-tree inconsistentports", CommandDefinition.Purpose.OPERATIONS, False),
+    ("inventory", "show inventory", CommandDefinition.Purpose.DISCOVERY, False),
+)
+
+CISCO_NXOS_DEEP_COMMANDS = CISCO_NXOS_READ_ONLY_COMMANDS + (
+    ("vrfs", "show vrf", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("vpc", "show vpc brief", CommandDefinition.Purpose.OPERATIONS, False),
+    ("hsrp", "show hsrp brief", CommandDefinition.Purpose.OPERATIONS, False),
+    ("trunks", "show interface trunk", CommandDefinition.Purpose.CONFIGURATION, False),
+    ("ospf_interfaces", "show ip ospf interface brief", CommandDefinition.Purpose.OPERATIONS, False),
+    ("bgp_neighbors_detail", "show bgp all neighbors", CommandDefinition.Purpose.OPERATIONS, True),
+    ("interface_errors", "show interface counters errors", CommandDefinition.Purpose.OPERATIONS, False),
+    ("stp_inconsistent", "show spanning-tree inconsistentports", CommandDefinition.Purpose.OPERATIONS, False),
+)
+
+CISCO_PROFILE_MANIFESTS = {
+    ("IOS_IOS_XE", 1): CISCO_IOS_XE_READ_ONLY_COMMANDS,
+    ("IOS_IOS_XE", 2): CISCO_IOS_XE_DEEP_COMMANDS,
+    ("NX-OS", 1): CISCO_NXOS_READ_ONLY_COMMANDS,
+    ("NX-OS", 2): CISCO_NXOS_DEEP_COMMANDS,
+}
+
 
 def _profile_manifest(commands):
     payload = [{"key": key, "command": command, "purpose": purpose, "sensitive": sensitive} for key, command, purpose, sensitive in commands]
@@ -89,8 +118,10 @@ def register_device(*, tenant, actor, asset, name, vendor, platform, management_
     AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.device_created", object_type="Device", object_id=str(device.id), metadata={"transport": device.transport, "asset_id": str(asset.id) if asset else None})
     if device.vendor == Device.Vendor.CISCO and device.platform.upper().replace(" ", "-") in {"IOS", "IOS-XE", "IOS_IOS_XE"}:
         install_cisco_ios_xe_profile(tenant=tenant, actor=actor)
+        install_cisco_ios_xe_deep_profile(tenant=tenant, actor=actor)
     elif device.vendor == Device.Vendor.CISCO and device.platform.upper().replace(" ", "-") in {"NXOS", "NX-OS"}:
         install_cisco_nxos_profile(tenant=tenant, actor=actor)
+        install_cisco_nxos_deep_profile(tenant=tenant, actor=actor)
     return device
 
 
@@ -168,12 +199,43 @@ def install_cisco_ios_xe_profile(*, tenant, actor):
 
 
 @transaction.atomic
+def install_cisco_ios_xe_deep_profile(*, tenant, actor):
+    return _install_cisco_profile(
+        tenant=tenant, actor=actor, name="Cisco IOS/IOS-XE deep assessment",
+        platform="IOS_IOS_XE", version=2, commands=CISCO_IOS_XE_DEEP_COMMANDS,
+    )
+
+
+@transaction.atomic
 def install_cisco_nxos_profile(*, tenant, actor):
     _operator(actor, tenant)
     commands = CISCO_NXOS_READ_ONLY_COMMANDS
     profile, created = CommandProfile.objects.get_or_create(
         tenant=tenant, name="Cisco NX-OS baseline", version=1,
         defaults={"vendor": Device.Vendor.CISCO, "platform": "NX-OS", "manifest_sha256": _profile_manifest(commands), "command_count": len(commands), "created_by": actor},
+    )
+    if created:
+        CommandDefinition.objects.bulk_create([
+            CommandDefinition(tenant=tenant, profile=profile, key=key, command_text=command, purpose=purpose, sequence=index, contains_sensitive_output=sensitive)
+            for index, (key, command, purpose, sensitive) in enumerate(commands, start=1)
+        ])
+        AuditEvent.objects.create(tenant=tenant, actor=actor, action="collector.profile_installed", object_type="CommandProfile", object_id=str(profile.id), metadata={"manifest_sha256": profile.manifest_sha256, "command_count": profile.command_count})
+    return profile, created
+
+
+@transaction.atomic
+def install_cisco_nxos_deep_profile(*, tenant, actor):
+    return _install_cisco_profile(
+        tenant=tenant, actor=actor, name="Cisco NX-OS deep assessment",
+        platform="NX-OS", version=2, commands=CISCO_NXOS_DEEP_COMMANDS,
+    )
+
+
+def _install_cisco_profile(*, tenant, actor, name, platform, version, commands):
+    _operator(actor, tenant)
+    profile, created = CommandProfile.objects.get_or_create(
+        tenant=tenant, name=name, version=version,
+        defaults={"vendor": Device.Vendor.CISCO, "platform": platform, "manifest_sha256": _profile_manifest(commands), "command_count": len(commands), "created_by": actor},
     )
     if created:
         CommandDefinition.objects.bulk_create([
@@ -195,7 +257,7 @@ def approve_command_profile(*, profile, actor, approval_reference):
         raise ValidationError("A network-engineering/code-review signoff reference is required.")
     commands = list(profile.commands.order_by("sequence"))
     actual = tuple((item.key, item.command_text, item.purpose, item.contains_sensitive_output) for item in commands)
-    expected = CISCO_IOS_XE_READ_ONLY_COMMANDS if profile.platform == "IOS_IOS_XE" else (CISCO_NXOS_READ_ONLY_COMMANDS if profile.platform == "NX-OS" else None)
+    expected = CISCO_PROFILE_MANIFESTS.get((profile.platform, profile.version))
     if profile.vendor != Device.Vendor.CISCO or expected is None or actual != expected:
         raise ValidationError("Profile commands do not exactly match the reviewed Cisco IOS/IOS-XE read-only allowlist.")
     if profile.command_count != len(actual) or profile.manifest_sha256 != _profile_manifest(actual):
